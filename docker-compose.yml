@@ -1,0 +1,18 @@
+# Local Postgres with pgvector, for anyone without Postgres.app.
+# Exposed on 5433 to avoid clashing with a local Postgres on 5432. Then set:
+#   DATABASE_URL=postgresql+asyncpg://muse:muse@localhost:5433/muse
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: muse
+      POSTGRES_PASSWORD: muse
+      POSTGRES_DB: muse
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/scripts/create_test_db.sql:/docker-entrypoint-initdb.d/create_test_db.sql:ro
+
+volumes:
+  pgdata:

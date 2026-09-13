@@ -1,0 +1,1 @@
+CREATE DATABASE muse_test;
