@@ -17,10 +17,6 @@ from pydantic import BaseModel, Field
 from app.services.errors import UpstreamError
 from app.services.product_page import PageProduct
 
-# Server-side fallback: if a request is declined by a safety classifier, the API re-runs
-# it on a suitable fallback model inside the same call.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
 
 class AestheticQuery(BaseModel):
     label: str = Field(
@@ -140,7 +136,7 @@ class ProductAI:
 
     async def _parse[T: BaseModel](self, system: str, content: list[dict], schema: type[T]) -> T:
         try:
-            response = await self.client.beta.messages.parse(
+            response = await self.client.messages.parse(
                 model=self.model,
                 max_tokens=16000,
                 system=system,
@@ -148,8 +144,6 @@ class ProductAI:
                 output_format=schema,
                 # User-facing request: medium effort keeps latency reasonable.
                 output_config={"effort": "medium"},
-                betas=[FALLBACK_BETA],
-                fallbacks="default",
             )
         except anthropic.AuthenticationError as exc:
             raise UpstreamError("The AI service rejected our credentials.") from exc

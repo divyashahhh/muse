@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     anthropic_api_key: str = ""
-    claude_model: str = "claude-opus-5"
+    claude_model: str = "claude-sonnet-5"
 
     serpapi_api_key: str = ""
     search_country: str = "us"

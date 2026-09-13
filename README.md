@@ -40,8 +40,8 @@ UI polish is deliberately deferred; this is the working proof of concept.
 - **Real retailer data, legally sourced.** Search results come from Google Lens and Google
   Shopping through [SerpApi](https://serpapi.com), not by scraping retailer sites. The only page
   Muse fetches directly is the single product link a user pastes.
-- **AI where judgement is needed.** Claude (`claude-opus-5`, structured outputs, server-side
-  refusal fallback) turns an image into a precise identity and search plan, and decides which
+- **AI where judgement is needed.** Claude (`claude-sonnet-5` at medium effort, structured outputs)
+  turns an image into a precise identity and search plan, and decides which
   price-comparison results are genuinely the same product rather than look-alikes.
 - **Results are cached** per item in Postgres, so reopening an item doesn't spend searches again.
   "Search again" forces a refresh.
