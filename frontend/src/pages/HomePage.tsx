@@ -62,6 +62,15 @@ export function HomePage() {
             Search
           </button>
         </div>
+        <p
+          role="note"
+          className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900"
+        >
+          <strong className="font-semibold">Heads up:</strong> some links may not work. Many stores
+          (for example H&amp;M, Uniqlo, Adidas, Sephora, Walmart and Target) block automated access
+          to their pages, and some only load product details in the browser. If a link doesn&rsquo;t
+          work, upload a screenshot of the item instead. It works just as well.
+        </p>
       </form>
 
       <div className="my-6 flex items-center gap-4 text-xs uppercase tracking-widest text-muted">
