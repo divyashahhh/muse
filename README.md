@@ -19,7 +19,7 @@ UI polish is deliberately deferred; this is the working proof of concept.
                  normalise image (Pillow) ──► store (Supabase Storage | local disk)
                          │
                          ▼
-        Claude vision analysis ──► identity (brand, model, colourway, category)
+     AI vision analysis (Gemini|Claude) ──► identity (brand, model, colourway, category)
                                    + search plan (exact-match query, aesthetic queries,
                                      similar brands)
                          │
@@ -32,7 +32,7 @@ UI polish is deliberately deferred; this is the working proof of concept.
         │                                   │
         │                              dedupe (cheapest per retailer)
         │                                   ▼
-        │                              Claude verifies "same product?" per listing
+        │                              AI verifies "same product?" per listing
         ▼                                   ▼
    listings table (cached per item) ◄───────┘
 ```
@@ -40,9 +40,10 @@ UI polish is deliberately deferred; this is the working proof of concept.
 - **Real retailer data, legally sourced.** Search results come from Google Lens and Google
   Shopping through [SerpApi](https://serpapi.com), not by scraping retailer sites. The only page
   Muse fetches directly is the single product link a user pastes.
-- **AI where judgement is needed.** Claude (`claude-sonnet-5` at medium effort, structured outputs)
-  turns an image into a precise identity and search plan, and decides which
-  price-comparison results are genuinely the same product rather than look-alikes.
+- **AI where judgement is needed.** A vision model turns an image into a precise identity and
+  search plan, and decides which price-comparison results are genuinely the same product rather
+  than look-alikes. Providers are swappable via `AI_PROVIDER`: **Google Gemini** (default, free
+  tier) or **Anthropic Claude** (`claude-sonnet-5`, paid). Both return schema-validated JSON.
 - **Results are cached** per item in Postgres, so reopening an item doesn't spend searches again.
   "Search again" forces a refresh.
 
@@ -74,8 +75,9 @@ Interactive docs: `http://localhost:8000/docs`.
 
 | Key | For | Required |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Item analysis and price-match verification | Yes |
-| `SERPAPI_API_KEY` | Google Lens + Shopping results | Yes |
+| `GEMINI_API_KEY` | Item analysis and price-match verification (free: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) | Yes, or Claude |
+| `ANTHROPIC_API_KEY` + `AI_PROVIDER=claude` | Same, using Claude instead (paid) | Optional |
+| `SERPAPI_API_KEY` | Google Lens + Shopping results (free plan: 250 searches/month) | Yes |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Public storage for uploads, so visual search works on photos | Recommended |
 
 Without Supabase, uploads are stored on local disk and Google Lens can't see them, so photo
@@ -110,7 +112,8 @@ cd frontend && npm run lint && npm run build
 ```
 
 Backend tests run against `muse_test` (override with `TEST_DATABASE_URL`) using the real Alembic
-migrations, with Claude, SerpApi and storage replaced by fakes, so no keys or network are needed.
+migrations, with the AI provider, SerpApi and storage replaced by fakes (the Gemini client is
+exercised through its real SDK against a mock HTTP transport), so no keys or network are needed.
 
 ## Known limitations / next steps
 

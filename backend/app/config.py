@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # NoDecode: read as a plain comma-separated string rather than JSON.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
+    # Which AI provider analyses items and verifies price matches.
+    ai_provider: Literal["gemini", "claude"] = "gemini"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.8-flash"
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5"
 
