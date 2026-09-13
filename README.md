@@ -1,74 +1,105 @@
 # Muse
 
-An AI stylist. Show Muse one piece you love — a photo or a product link — pick a store, and it
-curates a complete, coherent outfit from that store in the same aesthetic, explaining every pick.
-**Price Radar** then compares any item's price across the other stores.
+Show Muse one item you love (a photo or a link to a real product) and it:
 
-> Portfolio project. Stores are fictional; catalog data comes from a licensed public fashion
-> dataset. Nothing here is live inventory or real checkout.
+1. **Discovers** a marketplace of similar items: visual look-alikes, pieces in the same aesthetic,
+   and the same kind of item from comparable brands, all real listings from retailers and resellers.
+2. **Compares prices** Skyscanner-style: finds the *exact same product* at other retailers,
+   verified by AI, sorted cheapest first including shipping.
+3. **Saves** anything to a **bag** or **wishlist**. Checkout happens on the retailer's own site.
 
-## Status
+UI polish is deliberately deferred; this is the working proof of concept.
 
-| Phase | Scope | State |
-|---|---|---|
-| 1. Foundations | Monorepo, Postgres + pgvector schema & migrations, demo stores, catalog API, frontend shell | ✅ |
-| 2. Catalog ingestion | Import licensed dataset, assign items to stores with per-store pricing, CLIP embeddings | Next |
-| 3. Aesthetic understanding | Upload / URL input, object storage, vision-LLM aesthetic profile | |
-| 4. Curation | Per-slot retrieval + LLM outfit composition with rationales, moodboard view | |
-| 5. Price Radar | Cross-store same-product matching, comparison table | |
-
-## Architecture
+## How it works
 
 ```
-frontend/   React + TypeScript + Tailwind (Vite)     → Vercel
-backend/    FastAPI + SQLAlchemy (async) + Alembic   → Railway
-            Postgres + pgvector                       → Supabase / Neon
+ upload / URL ──► fetch page (SSRF-guarded) ──► schema.org / Open Graph product facts
+                         │
+                         ▼
+                 normalise image (Pillow) ──► store (Supabase Storage | local disk)
+                         │
+                         ▼
+        Claude vision analysis ──► identity (brand, model, colourway, category)
+                                   + search plan (exact-match query, aesthetic queries,
+                                     similar brands)
+                         │
+        ┌────────────────┴──────────────────┐
+        ▼                                   ▼
+   DISCOVER                             COMPARE PRICES
+   Google Lens visual matches           Google Lens exact matches
+   Google Shopping × aesthetic queries   Google Shopping (exact-match query)
+   Google Shopping × similar brands     └► Google product store lists (price/shipping/total)
+        │                                   │
+        │                              dedupe (cheapest per retailer)
+        │                                   ▼
+        │                              Claude verifies "same product?" per listing
+        ▼                                   ▼
+   listings table (cached per item) ◄───────┘
 ```
+
+- **Real retailer data, legally sourced.** Search results come from Google Lens and Google
+  Shopping through [SerpApi](https://serpapi.com), not by scraping retailer sites. The only page
+  Muse fetches directly is the single product link a user pastes.
+- **AI where judgement is needed.** Claude (`claude-opus-5`, structured outputs, server-side
+  refusal fallback) turns an image into a precise identity and search plan, and decides which
+  price-comparison results are genuinely the same product rather than look-alikes.
+- **Results are cached** per item in Postgres, so reopening an item doesn't spend searches again.
+  "Search again" forces a refresh.
 
 ### Data model
 
-- **stores** — the fictional retailers.
-- **products** — catalog items per store, with a `vector(768)` CLIP image embedding (HNSW, cosine).
-  `source_id` is the item's id in the source dataset: the same item can be listed by several stores
-  at different prices. It's kept as *ground truth for evaluating* Price Radar and is deliberately
-  not used by the matcher.
-- **inspirations** — what the user showed Muse (image key in object storage, extracted
-  title/price, aesthetic profile, embedding).
-- **boards / board_items** — a curated collection: inspiration × store, with an ordered list of
-  picks, each with its rationale. The aesthetic profile is snapshotted onto the board so it stays
-  reproducible.
+- **items**: what the user showed Muse: stored image, product-page facts, Claude's analysis.
+- **listings**: real listings found for an item, by kind: `visual_match`, `aesthetic`,
+  `similar_brand`, `offer` (verified same product, with the match reason).
+- **saved_items**: bag and wishlist entries, snapshotted so they survive result refreshes.
+  Users are anonymous for now (a per-browser id in the `X-Muse-Client` header).
 
-### API (so far)
+### API
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/health` | Liveness + database check |
-| GET | `/api/stores` | Stores with product counts |
-| GET | `/api/stores/{slug}/products?category=&limit=&offset=` | Paginated catalog |
+| POST | `/api/items/upload` | Multipart image → analysed item |
+| POST | `/api/items/from-url` | `{url}` → analysed item |
+| GET | `/api/items/{id}` | Item + analysis |
+| POST | `/api/items/{id}/discover?refresh=` | Discovery sections (cached) |
+| POST | `/api/items/{id}/prices?refresh=` | Verified offers, cheapest first (cached) |
+| GET / POST | `/api/saved` | List / add bag & wishlist items |
+| PATCH / DELETE | `/api/saved/{id}` | Move between lists / remove |
 
-Interactive docs at `http://localhost:8000/docs`.
+Interactive docs: `http://localhost:8000/docs`.
 
-## Local development
+## Setup
 
-Requires Python 3.12+, Node 20+, and Postgres with the pgvector extension (Postgres.app ships it;
-or `docker compose up -d` — see `docker-compose.yml` for the connection string).
+### API keys
+
+| Key | For | Required |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Item analysis and price-match verification | Yes |
+| `SERPAPI_API_KEY` | Google Lens + Shopping results | Yes |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Public storage for uploads, so visual search works on photos | Recommended |
+
+Without Supabase, uploads are stored on local disk and Google Lens can't see them, so photo
+uploads get AI-query results only. Pasted product links always get visual search, because the
+retailer's image is already public. Create a **public** bucket named `uploads` in Supabase Storage.
+
+Each item uses roughly 5–8 SerpApi searches for discovery and 3–4 for price comparison.
+
+### Run locally
+
+Requires Python 3.12+, Node 20+ and Postgres.
 
 ```bash
-# Databases (Postgres.app / local Postgres)
 createdb muse && createdb muse_test
 
-# Backend
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-cp .env.example .env
+cp .env.example .env            # add your API keys
 .venv/bin/alembic upgrade head
-.venv/bin/python -m scripts.seed_stores
-.venv/bin/uvicorn app.main:app --reload        # http://localhost:8000
+.venv/bin/uvicorn app.main:app --reload         # http://localhost:8000
 
-# Frontend (new terminal)
-cd frontend
+cd ../frontend
 npm install
-npm run dev                                     # http://localhost:5173
+npm run dev                                      # http://localhost:5173
 ```
 
 ### Checks
@@ -78,5 +109,15 @@ cd backend  && .venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/ruff form
 cd frontend && npm run lint && npm run build
 ```
 
-Backend tests run against `muse_test` (override with `TEST_DATABASE_URL`), building the schema
-through the real Alembic migrations.
+Backend tests run against `muse_test` (override with `TEST_DATABASE_URL`) using the real Alembic
+migrations, with Claude, SerpApi and storage replaced by fakes, so no keys or network are needed.
+
+## Known limitations / next steps
+
+- Some retailers (e.g. Zara) block automated page fetches; users are asked to upload a photo instead.
+- Price verification is text-based (titles, retailer, price); adding listing images to the
+  verification call would catch colourway mismatches that titles hide.
+- Prices mix currencies when results do; the market is set by `SEARCH_COUNTRY`.
+- Discovery results aren't re-ranked yet. Next candidates: CLIP embeddings + pgvector for visual
+  re-ranking, and Claude filtering of off-aesthetic results.
+- Accounts (to sync bag/wishlist across devices), background jobs with progress updates, and UI design.

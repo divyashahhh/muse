@@ -1,41 +1,85 @@
 // Typed client for the Muse API. Types mirror backend/app/schemas.py.
 
-export type Category = 'top' | 'bottom' | 'dress' | 'outerwear' | 'footwear' | 'bag' | 'accessory'
+export type ListingKind = 'visual_match' | 'aesthetic' | 'similar_brand' | 'offer'
+export type SavedListName = 'bag' | 'wishlist'
 
-export interface Health {
-  status: 'ok' | 'degraded'
-  database: string
-}
-
-export interface Store {
-  id: number
-  slug: string
-  name: string
-  tagline: string
-  accent_color: string
-  product_count: number
-}
-
-export interface Product {
-  id: number
-  store_id: number
-  title: string
+export interface ItemAnalysis {
+  category: string
+  product_name: string
   brand: string | null
-  category: Category
-  subcategory: string | null
-  base_color: string | null
-  price_cents: number
-  currency: string
-  image_url: string
-  product_url: string | null
+  brand_confidence: 'confirmed' | 'likely' | 'unknown'
+  colors: string[]
+  materials: string[]
+  style_tags: string[]
+  gender: string
+  price_tier: string
+  summary: string
+  exact_match_query: string
+  aesthetic_queries: { label: string; query: string }[]
+  similar_brands: string[]
 }
 
-export interface Page<T> {
-  items: T[]
-  total: number
-  limit: number
-  offset: number
+export interface Item {
+  id: string
+  source: 'upload' | 'url'
+  source_url: string | null
+  image_url: string
+  visual_search_available: boolean
+  title: string | null
+  brand: string | null
+  retailer: string | null
+  price: number | null
+  currency: string | null
+  analysis: ItemAnalysis
+  created_at: string
 }
+
+export interface Listing {
+  id: number
+  kind: ListingKind
+  group_label: string | null
+  title: string
+  url: string
+  retailer: string | null
+  retailer_icon: string | null
+  image_url: string | null
+  price: number | null
+  currency: string | null
+  shipping: number | null
+  in_stock: boolean | null
+  condition: string | null
+  rating: number | null
+  reviews: number | null
+  match_reason: string | null
+}
+
+export interface DiscoverResult {
+  item_id: string
+  searched_at: string
+  sections: { kind: ListingKind; label: string; listings: Listing[] }[]
+}
+
+export interface PriceComparison {
+  item_id: string
+  checked_at: string
+  reference: { retailer: string | null; url: string; price: number; currency: string | null } | null
+  offers: Listing[]
+}
+
+export interface SavedItem {
+  id: number
+  list: SavedListName
+  item_id: string | null
+  title: string
+  url: string
+  retailer: string | null
+  image_url: string | null
+  price: number | null
+  currency: string | null
+  created_at: string
+}
+
+export type SavedItemInput = Omit<SavedItem, 'id' | 'created_at'>
 
 export class ApiError extends Error {
   readonly status: number
@@ -47,34 +91,54 @@ export class ApiError extends Error {
 }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
+const CLIENT_ID_KEY = 'muse-client-id'
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE_URL}/api${path}`, init)
+/** Anonymous per-browser id that scopes the bag and wishlist until accounts exist. */
+function clientId(): string {
+  try {
+    let id = localStorage.getItem(CLIENT_ID_KEY)
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem(CLIENT_ID_KEY, id)
+    }
+    return id
+  } catch {
+    return 'anonymous-session'
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  headers.set('X-Muse-Client', clientId())
+  if (typeof init.body === 'string') headers.set('Content-Type', 'application/json')
+
+  const response = await fetch(`${BASE_URL}/api${path}`, { ...init, headers })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-    throw new ApiError(response.status, detail)
+    throw new ApiError(response.status, detail || 'Something went wrong.')
   }
-  return response.json() as Promise<T>
+  return (response.status === 204 ? undefined : await response.json()) as T
 }
 
 export const api = {
-  health: (signal?: AbortSignal) => request<Health>('/health', { signal }),
-
-  stores: (signal?: AbortSignal) => request<Store[]>('/stores', { signal }),
-
-  storeProducts: (
-    slug: string,
-    params: { category?: Category; limit?: number; offset?: number } = {},
-    signal?: AbortSignal,
-  ) => {
-    const query = new URLSearchParams(
-      Object.entries(params)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => [key, String(value)]),
-    )
-    return request<Page<Product>>(`/stores/${encodeURIComponent(slug)}/products?${query}`, {
-      signal,
-    })
+  uploadItem: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<Item>('/items/upload', { method: 'POST', body: form })
   },
+  itemFromUrl: (url: string) =>
+    request<Item>('/items/from-url', { method: 'POST', body: JSON.stringify({ url }) }),
+  getItem: (id: string) => request<Item>(`/items/${id}`),
+  discover: (id: string, refresh = false) =>
+    request<DiscoverResult>(`/items/${id}/discover?refresh=${refresh}`, { method: 'POST' }),
+  comparePrices: (id: string, refresh = false) =>
+    request<PriceComparison>(`/items/${id}/prices?refresh=${refresh}`, { method: 'POST' }),
+
+  listSaved: () => request<SavedItem[]>('/saved'),
+  save: (item: SavedItemInput) =>
+    request<SavedItem>('/saved', { method: 'POST', body: JSON.stringify(item) }),
+  moveSaved: (id: number, list: SavedListName) =>
+    request<SavedItem>(`/saved/${id}`, { method: 'PATCH', body: JSON.stringify({ list }) }),
+  removeSaved: (id: number) => request<void>(`/saved/${id}`, { method: 'DELETE' }),
 }

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import field_validator
@@ -13,9 +14,19 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     anthropic_api_key: str = ""
-    replicate_api_token: str = ""
+    claude_model: str = "claude-opus-5"
+
+    serpapi_api_key: str = ""
+    search_country: str = "us"
+    search_language: str = "en"
+
     supabase_url: str = ""
     supabase_service_key: str = ""
+    supabase_bucket: str = "uploads"
+
+    public_api_url: str = "http://localhost:8000"
+    media_dir: Path = Path("media")
+    max_upload_bytes: int = 10 * 1024 * 1024
 
     @field_validator("database_url")
     @classmethod
