@@ -6,12 +6,11 @@ from typing import Annotated
 
 import anthropic
 from fastapi import Depends, Header, HTTPException
-from google import genai
 
 from app.config import get_settings
 from app.services.ai import ProductAI
 from app.services.ai_claude import ClaudeProductAI
-from app.services.ai_gemini import GeminiProductAI
+from app.services.ai_gemini import GeminiProductAI, gemini_client
 from app.services.errors import NotConfiguredError
 from app.services.search import SerpApiClient
 from app.services.storage import ImageStorage, LocalImageStorage, SupabaseImageStorage
@@ -28,7 +27,8 @@ def get_product_ai() -> ProductAI:
         )
     if not settings.gemini_api_key:
         raise NotConfiguredError("AI analysis isn't configured: set GEMINI_API_KEY.")
-    return GeminiProductAI(genai.Client(api_key=settings.gemini_api_key), settings.gemini_model)
+    models = [settings.gemini_model, *settings.gemini_fallback_models]
+    return GeminiProductAI(gemini_client(settings.gemini_api_key), list(dict.fromkeys(models)))
 
 
 @lru_cache

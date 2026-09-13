@@ -13,7 +13,7 @@ from app.services.errors import UpstreamError
 from tests.conftest import ANALYSIS
 
 
-def gemini_client(handler) -> genai.Client:
+def mock_client(handler) -> genai.Client:
     return genai.Client(
         api_key="test-key",
         http_options=types.HttpOptions(
@@ -44,7 +44,7 @@ async def test_analyze_sends_image_system_prompt_and_schema() -> None:
         requests.append(json.loads(request.content))
         return model_reply(ANALYSIS.model_dump(mode="json"))
 
-    ai = GeminiProductAI(gemini_client(handler), "gemini-test")
+    ai = GeminiProductAI(mock_client(handler), ["gemini-test"])
     result = await ai.analyze(b"\xff\xd8fake-jpeg", page=None)
 
     assert result == ANALYSIS
@@ -70,7 +70,7 @@ async def test_verify_offers_parses_verdicts_and_drops_bad_indexes() -> None:
             }
         )
 
-    ai = GeminiProductAI(gemini_client(handler), "gemini-test")
+    ai = GeminiProductAI(mock_client(handler), ["gemini-test"])
     candidate = OfferCandidate(
         title="Samba OG", retailer="Shop", price=90, currency="$", condition=None
     )
@@ -87,7 +87,7 @@ async def test_quota_exhaustion_becomes_friendly_error() -> None:
             },
         )
 
-    ai = GeminiProductAI(gemini_client(handler), "gemini-test")
+    ai = GeminiProductAI(mock_client(handler), ["gemini-test"])
     with pytest.raises(UpstreamError, match="free AI quota"):
         await ai.analyze(b"\xff\xd8", page=None)
 
@@ -96,6 +96,35 @@ async def test_malformed_output_becomes_upstream_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return model_reply({"not": "an analysis"})
 
-    ai = GeminiProductAI(gemini_client(handler), "gemini-test")
+    ai = GeminiProductAI(mock_client(handler), ["gemini-test"])
     with pytest.raises(UpstreamError, match="unexpected response"):
+        await ai.analyze(b"\xff\xd8", page=None)
+
+
+async def test_overloaded_model_falls_back_to_next() -> None:
+    models_called: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = request.url.path.split("/models/")[1].split(":")[0]
+        models_called.append(model)
+        if model == "busy-model":
+            return httpx.Response(
+                503,
+                json={"error": {"code": 503, "message": "High demand", "status": "UNAVAILABLE"}},
+            )
+        return model_reply(ANALYSIS.model_dump(mode="json"))
+
+    ai = GeminiProductAI(mock_client(handler), ["busy-model", "spare-model"])
+    assert await ai.analyze(b"\xff\xd8", page=None) == ANALYSIS
+    assert models_called == ["busy-model", "spare-model"]
+
+
+async def test_all_models_overloaded_is_reported() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503, json={"error": {"code": 503, "message": "High demand", "status": "UNAVAILABLE"}}
+        )
+
+    ai = GeminiProductAI(mock_client(handler), ["a", "b"])
+    with pytest.raises(UpstreamError, match="overloaded"):
         await ai.analyze(b"\xff\xd8", page=None)
