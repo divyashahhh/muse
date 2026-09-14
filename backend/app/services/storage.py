@@ -13,8 +13,6 @@ from app.services.errors import UpstreamError
 class StoredImage:
     key: str
     url: str
-    # Whether `url` can be fetched from the public internet (e.g. by Google Lens).
-    internet_reachable: bool
 
 
 class ImageStorage(Protocol):
@@ -37,13 +35,11 @@ class LocalImageStorage:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        return StoredImage(
-            key=key, url=f"{self.public_base_url}/media/{key}", internet_reachable=False
-        )
+        return StoredImage(key=key, url=f"{self.public_base_url}/media/{key}")
 
 
 class SupabaseImageStorage:
-    """Supabase Storage. The bucket must be public so Google Lens can read the images."""
+    """Supabase Storage, for deployments without a persistent disk. The bucket must be public."""
 
     def __init__(self, project_url: str, service_key: str, bucket: str) -> None:
         self.project_url = project_url.rstrip("/")
@@ -67,5 +63,4 @@ class SupabaseImageStorage:
         return StoredImage(
             key=key,
             url=f"{self.project_url}/storage/v1/object/public/{self.bucket}/{key}",
-            internet_reachable=True,
         )

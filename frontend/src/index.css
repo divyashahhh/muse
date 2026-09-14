@@ -1,19 +1,25 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-display: 'Fraunces', ui-serif, Georgia, serif;
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Jost', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
-  --color-paper: #f6f2ec;
-  --color-card: #fffdfa;
-  --color-ink: #1c1917;
-  --color-muted: #78716c;
-  --color-line: #e7e0d6;
-  --color-clay: #b4653f;
+  /* Palette from the Muse design: deep brown, mustard accent, warm neutrals. */
+  --color-brown: #3f1d0b;
+  --color-brown-light: #6b3a1f;
+  --color-cream: #f7f1ec;
+  --color-mustard: #efb54b;
+  --color-sand: #f3f3f3;
+  --color-page: #ffffff;
+  --color-ink: #1e1b19;
+  --color-muted: #7d7773;
+  --color-line: #ece6e1;
+  --color-success: #2f8f5b;
+
+  --shadow-card: 0 12px 32px -18px rgb(63 29 11 / 0.35);
 }
 
 @layer base {
   body {
-    @apply bg-paper font-sans text-ink antialiased;
+    @apply bg-page font-sans text-ink antialiased;
   }
 }

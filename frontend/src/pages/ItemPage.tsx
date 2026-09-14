@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
+import { HeartButton } from '../components/HeartButton'
+import { ExternalIcon, ShieldCheckIcon, SparkleIcon, StarIcon } from '../components/Icons'
 import { ListingCard } from '../components/ListingCard'
-import { SaveButtons } from '../components/SaveButtons'
 import { useRequest } from '../hooks/useRequest'
 import { api } from '../lib/api'
-import type { Item, ListingKind } from '../lib/api'
-import { formatPrice, hostname } from '../lib/format'
+import type { Item, Listing, ListingKind } from '../lib/api'
+import { formatPrice, hostname, swatchFor } from '../lib/format'
 
 type Tab = 'discover' | 'prices'
 
@@ -18,21 +19,35 @@ export function ItemPage() {
 function ItemView({ id }: { id: string }) {
   const [item] = useRequest(() => api.getItem(id))
   const [tab, setTab] = useState<Tab>('discover')
-  // Price comparison spends searches, so it only starts once its tab is first opened.
+  // Price comparison spends search quota, so it only starts once its tab is first opened.
   const [pricesOpened, setPricesOpened] = useState(false)
 
-  if (item.status === 'loading') return <p className="text-muted">Loading…</p>
-  if (item.status === 'error') return <ErrorBox message={item.error} />
+  if (item.status === 'loading') return <PageMessage>Loading…</PageMessage>
+  if (item.status === 'error')
+    return (
+      <PageMessage>
+        <ErrorBox message={item.error} />
+      </PageMessage>
+    )
 
+  const data = item.data
   return (
-    <div>
-      <ItemSummary item={item.data} />
+    <div className="mx-auto max-w-7xl px-4 sm:px-6">
+      <nav aria-label="Breadcrumb" className="py-6 text-sm text-muted">
+        <Link to="/" className="hover:text-brown">Home</Link>
+        <span className="mx-2">/</span>
+        <Link to="/recents" className="hover:text-brown">Recents</Link>
+        <span className="mx-2">/</span>
+        <span className="text-ink">{data.analysis.category}</span>
+      </nav>
 
-      <div role="tablist" className="mt-10 flex gap-6 border-b border-line">
+      <ItemDetails item={data} />
+
+      <div role="tablist" className="mt-16 flex justify-center gap-10 border-b border-line">
         {(
           [
-            ['discover', 'Discover similar'],
-            ['prices', 'Compare prices'],
+            ['discover', 'Discover Similar'],
+            ['prices', 'Compare Prices'],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -43,8 +58,8 @@ function ItemView({ id }: { id: string }) {
               setTab(value)
               if (value === 'prices') setPricesOpened(true)
             }}
-            className={`-mb-px border-b-2 pb-3 text-sm font-medium ${
-              tab === value ? 'border-ink' : 'border-transparent text-muted hover:text-ink'
+            className={`-mb-px border-b-2 px-1 pb-4 text-[17px] transition ${
+              tab === value ? 'border-brown font-medium text-brown' : 'border-transparent text-muted hover:text-ink'
             }`}
           >
             {label}
@@ -52,14 +67,14 @@ function ItemView({ id }: { id: string }) {
         ))}
       </div>
 
-      <div className="mt-8">
+      <div className="pt-10">
         {/* Tabs stay mounted once opened so switching back doesn't reload. */}
         <div hidden={tab !== 'discover'}>
-          <DiscoverTab item={item.data} />
+          <DiscoverTab item={data} />
         </div>
         {pricesOpened && (
           <div hidden={tab !== 'prices'}>
-            <PricesTab item={item.data} />
+            <PricesTab item={data} />
           </div>
         )}
       </div>
@@ -67,49 +82,102 @@ function ItemView({ id }: { id: string }) {
   )
 }
 
-function ItemSummary({ item }: { item: Item }) {
+function ItemDetails({ item }: { item: Item }) {
   const a = item.analysis
+  const colorSwatches = a.colors.map((name) => ({ name, css: swatchFor(name) }))
+
   return (
-    <section className="grid gap-8 sm:grid-cols-[240px_1fr]">
-      <img
-        src={item.image_url}
-        alt={a.product_name}
-        className="aspect-square w-full rounded-xl border border-line bg-white object-contain p-2"
-      />
-      <div>
-        <p className="text-xs uppercase tracking-widest text-muted">{a.category}</p>
-        <h1 className="mt-2 font-display text-3xl leading-tight">{item.title ?? a.product_name}</h1>
-        {a.brand && (
-          <p className="mt-1 text-muted">
-            {a.brand}
-            {a.brand_confidence !== 'confirmed' && !item.brand && ' (identified by AI)'}
-          </p>
-        )}
-        {item.price !== null && (
-          <p className="mt-3 text-xl font-semibold">
-            {formatPrice(item.price, item.currency)}
-            {item.retailer && <span className="ml-2 text-sm font-normal text-muted">at {item.retailer}</span>}
-          </p>
-        )}
-        <p className="mt-4 leading-relaxed">{a.summary}</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {[...a.style_tags, ...a.colors, ...a.materials].map((tag, i) => (
-            <span key={`${tag}-${i}`} className="rounded-full bg-line/60 px-3 py-1 text-xs">
-              {tag}
-            </span>
-          ))}
+    <section className="grid gap-10 lg:grid-cols-2">
+      <div className="flex aspect-square items-center justify-center overflow-hidden rounded-3xl bg-sand">
+        <img src={item.image_url} alt={a.product_name} className="h-full w-full object-contain p-8 mix-blend-multiply" />
+      </div>
+
+      <div className="lg:py-4">
+        <p className="text-sm text-muted capitalize">{a.category}</p>
+        <div className="mt-2 flex items-start justify-between gap-4">
+          <h1 className="text-3xl leading-tight font-medium sm:text-4xl">{item.title ?? a.product_name}</h1>
+          <span className="mt-2 flex shrink-0 items-center gap-1 text-sm">
+            <StarIcon size={16} className="text-mustard" />
+            <span className="capitalize">{a.price_tier !== 'unknown' ? a.price_tier : 'Style'}</span>
+          </span>
         </div>
+
+        {(item.brand || a.brand) && (
+          <p className="mt-2 text-muted">
+            by <span className="font-medium text-ink">{item.brand ?? a.brand}</span>
+            {!item.brand && a.brand_confidence !== 'confirmed' && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-cream px-2 py-0.5 text-xs text-brown">
+                <SparkleIcon size={12} /> identified by AI
+              </span>
+            )}
+          </p>
+        )}
+
+        {item.price !== null && (
+          <p className="mt-5 text-3xl font-semibold text-brown">
+            {formatPrice(item.price, item.currency)}
+            {item.retailer && <span className="ml-3 text-base font-normal text-muted">at {item.retailer}</span>}
+          </p>
+        )}
+
+        <p className="mt-5 leading-relaxed text-muted">{a.summary}</p>
+
+        {colorSwatches.length > 0 && (
+          <div className="mt-6">
+            <p className="text-sm">
+              Color : <span className="text-muted capitalize">{a.colors.join(', ')}</span>
+            </p>
+            <div className="mt-3 flex gap-3">
+              {colorSwatches.map(({ name, css }) => (
+                <span
+                  key={name}
+                  title={name}
+                  className="size-8 rounded-full border border-line ring-2 ring-white ring-offset-1 ring-offset-line"
+                  style={{ background: css ?? 'repeating-linear-gradient(45deg,#eee 0 4px,#fff 4px 8px)' }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {a.materials.length > 0 && (
+          <div className="mt-6">
+            <p className="text-sm">Material :</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {a.materials.map((m) => (
+                <span key={m} className="rounded-lg border border-line px-3.5 py-1.5 text-sm capitalize">
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {a.style_tags.length > 0 && (
+          <div className="mt-6">
+            <p className="text-sm">Style :</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {a.style_tags.map((tag) => (
+                <span key={tag} className="rounded-full bg-cream px-3.5 py-1.5 text-sm text-brown capitalize">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {item.source_url && (
-          <>
+          <div className="mt-8 flex items-center gap-3">
             <a
               href={item.source_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-4 inline-block text-sm underline"
+              className="flex flex-1 items-center justify-center gap-2 rounded-full bg-brown px-8 py-3.5 font-medium text-white transition hover:bg-brown-light sm:flex-none"
             >
-              View original on {hostname(item.source_url)}
+              View on {hostname(item.source_url)} <ExternalIcon size={16} />
             </a>
-            <SaveButtons
+            <HeartButton
+              variant="outline"
               item={{
                 item_id: item.id,
                 title: item.title ?? a.product_name,
@@ -120,14 +188,25 @@ function ItemSummary({ item }: { item: Item }) {
                 currency: item.currency,
               }}
             />
-          </>
+          </div>
         )}
+
+        <dl className="mt-8 space-y-2 border-t border-line pt-6 text-sm">
+          <div className="flex gap-2">
+            <dt className="text-muted">Identified as :</dt>
+            <dd>{a.product_name}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-muted">Searched from :</dt>
+            <dd>{item.source === 'url' ? 'Product link' : 'Uploaded photo'}</dd>
+          </div>
+        </dl>
       </div>
     </section>
   )
 }
 
-const SECTION_HEADINGS: Record<Exclude<ListingKind, 'offer'>, string> = {
+const SECTION_EYEBROWS: Record<Exclude<ListingKind, 'offer'>, string> = {
   visual_match: 'Visually similar',
   aesthetic: 'Same aesthetic',
   similar_brand: 'From similar brands',
@@ -137,26 +216,20 @@ function DiscoverTab({ item }: { item: Item }) {
   const [result, reload] = useRequest((refresh) => api.discover(item.id, refresh))
 
   if (result.status === 'loading')
-    return <p className="text-muted">Searching retailers for similar items… (up to ~20 seconds)</p>
+    return <LoadingNote>Searching stores and filtering results with AI… (up to ~40 seconds)</LoadingNote>
   if (result.status === 'error') return <ErrorBox message={result.error} onRetry={reload} />
 
   const { sections } = result.data
   return (
-    <div className="space-y-12">
-      {!item.visual_search_available && (
-        <p className="rounded-lg bg-line/40 p-3 text-sm text-muted">
-          Visual image search needs cloud image storage, which isn&rsquo;t configured — showing
-          AI-matched results only.
-        </p>
-      )}
-      {sections.length === 0 && <p className="text-muted">No results found for this item.</p>}
+    <div className="space-y-16">
+      {sections.length === 0 && <p className="text-center text-muted">No results found for this item.</p>}
       {sections.map((section) => (
         <section key={`${section.kind}-${section.label}`}>
-          <p className="text-xs uppercase tracking-widest text-muted">
-            {SECTION_HEADINGS[section.kind as keyof typeof SECTION_HEADINGS]}
-          </p>
-          <h2 className="mt-1 font-display text-2xl">{section.label}</h2>
-          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="text-center">
+            <p className="text-sm text-muted">{SECTION_EYEBROWS[section.kind as keyof typeof SECTION_EYEBROWS]}</p>
+            <h2 className="mt-1 text-3xl font-medium">{section.label}</h2>
+          </div>
+          <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-10 md:grid-cols-3 lg:grid-cols-4">
             {section.listings.map((listing) => (
               <ListingCard key={listing.id} listing={listing} itemId={item.id} />
             ))}
@@ -168,113 +241,121 @@ function DiscoverTab({ item }: { item: Item }) {
   )
 }
 
+const total = (o: Pick<Listing, 'price' | 'shipping'>) => (o.price ?? 0) + (o.shipping ?? 0)
+
 function PricesTab({ item }: { item: Item }) {
   const [result, reload] = useRequest((refresh) => api.comparePrices(item.id, refresh))
 
   if (result.status === 'loading')
-    return <p className="text-muted">Checking retailers and verifying matches… (up to ~30 seconds)</p>
+    return <LoadingNote>Checking stores and verifying matches with AI… (up to ~40 seconds)</LoadingNote>
   if (result.status === 'error') return <ErrorBox message={result.error} onRetry={reload} />
 
   const { offers, reference } = result.data
   const cheapest = offers[0]
-  const total = (o: { price: number | null; shipping: number | null }) => (o.price ?? 0) + (o.shipping ?? 0)
+  // Only compare like with like: sources can return different currencies.
   const saving =
-    reference && cheapest && total(cheapest) < reference.price ? reference.price - total(cheapest) : null
+    reference && cheapest && reference.currency === cheapest.currency && total(cheapest) < reference.price
+      ? reference.price - total(cheapest)
+      : null
 
   return (
-    <div>
+    <div className="mx-auto max-w-4xl">
       {cheapest && (
-        <div className="mb-6 rounded-xl border border-line bg-card p-5">
-          <p className="text-sm text-muted">Best price found</p>
-          <p className="mt-1 text-2xl font-semibold">
-            {formatPrice(total(cheapest), cheapest.currency)}{' '}
-            <span className="text-base font-normal text-muted">at {cheapest.retailer}</span>
-          </p>
-          {saving !== null && (
-            <p className="mt-1 text-sm text-green-700">
-              {formatPrice(saving, cheapest.currency)} less than your link
+        <div className="mb-8 flex flex-col gap-4 rounded-3xl bg-brown p-6 text-white sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm text-white/70">Best price found</p>
+            <p className="mt-1 text-3xl font-semibold">
+              {formatPrice(total(cheapest), cheapest.currency)}
+              <span className="ml-2 text-base font-normal text-white/70">at {cheapest.retailer}</span>
             </p>
-          )}
+            {saving !== null && (
+              <p className="mt-1 text-sm text-mustard">{formatPrice(saving, cheapest.currency)} less than your link</p>
+            )}
+          </div>
+          <a
+            href={cheapest.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 rounded-full bg-mustard px-7 py-3 font-medium text-ink hover:brightness-95"
+          >
+            View deal <ExternalIcon size={16} />
+          </a>
         </div>
       )}
 
-      {offers.length === 0 ? (
-        <p className="text-muted">We couldn&rsquo;t find this exact item at other retailers.</p>
+      {offers.length === 0 && !reference ? (
+        <p className="text-center text-muted">We couldn&rsquo;t find this exact item at other retailers.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-card">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-line text-xs uppercase tracking-wider text-muted">
-              <tr>
-                <th className="p-3">Retailer</th>
-                <th className="p-3">Price</th>
-                <th className="p-3">Shipping</th>
-                <th className="p-3">Total</th>
-                <th className="p-3">Why it matches</th>
-                <th className="p-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {reference && (
-                <tr className="border-b border-line bg-paper/60">
-                  <td className="p-3">{reference.retailer ?? hostname(reference.url)} <span className="text-xs text-muted">(your link)</span></td>
-                  <td className="p-3">{formatPrice(reference.price, reference.currency)}</td>
-                  <td className="p-3 text-muted">—</td>
-                  <td className="p-3">{formatPrice(reference.price, reference.currency)}</td>
-                  <td className="p-3 text-muted">Original listing</td>
-                  <td className="p-3" />
-                </tr>
-              )}
-              {offers.map((offer, i) => (
-                <tr key={offer.id} className="border-b border-line last:border-0">
-                  <td className="p-3">
-                    <div className="flex items-center gap-2">
-                      {offer.retailer_icon && (
-                        <img src={offer.retailer_icon} alt="" className="size-5 rounded-sm" referrerPolicy="no-referrer" />
-                      )}
-                      <span className="font-medium">{offer.retailer ?? hostname(offer.url)}</span>
-                      {i === 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-800">Cheapest</span>}
-                    </div>
-                    {offer.condition && <span className="text-xs text-muted">{offer.condition}</span>}
-                  </td>
-                  <td className="p-3">{formatPrice(offer.price, offer.currency)}</td>
-                  <td className="p-3">
-                    {offer.shipping === null ? <span className="text-muted">—</span> : offer.shipping === 0 ? 'Free' : formatPrice(offer.shipping, offer.currency)}
-                  </td>
-                  <td className="p-3 font-semibold">{formatPrice(total(offer), offer.currency)}</td>
-                  <td className="p-3 text-xs text-muted">{offer.match_reason}</td>
-                  <td className="p-3">
-                    <div className="flex flex-col items-end gap-2">
-                      <a
-                        href={offer.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-full bg-ink px-4 py-1.5 text-xs font-medium whitespace-nowrap text-paper"
-                      >
-                        View deal
-                      </a>
-                      <SaveButtons
-                        compact
-                        item={{
-                          item_id: item.id,
-                          title: offer.title,
-                          url: offer.url,
-                          retailer: offer.retailer,
-                          image_url: offer.image_url ?? item.image_url,
-                          price: offer.price,
-                          currency: offer.currency,
-                        }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="space-y-3">
+          {reference && (
+            <li className="flex flex-wrap items-center gap-4 rounded-2xl border border-dashed border-line bg-sand/60 p-4">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{reference.retailer ?? hostname(reference.url)}</p>
+                <p className="text-sm text-muted">Your original link</p>
+              </div>
+              <p className="text-lg font-semibold">{formatPrice(reference.price, reference.currency)}</p>
+            </li>
+          )}
+          {offers.map((offer, i) => (
+            <li key={offer.id} className="flex flex-wrap items-center gap-4 rounded-2xl border border-line p-4 transition hover:shadow-[var(--shadow-card)]">
+              <div className="size-16 shrink-0 overflow-hidden rounded-xl bg-sand">
+                {(offer.image_url ?? item.image_url) && (
+                  <img
+                    src={offer.image_url ?? item.image_url}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-contain p-1 mix-blend-multiply"
+                  />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{offer.retailer ?? hostname(offer.url)}</p>
+                  {i === 0 && <span className="rounded-full bg-mustard px-2.5 py-0.5 text-xs font-medium">Cheapest</span>}
+                  {offer.condition && <span className="rounded-full bg-cream px-2.5 py-0.5 text-xs text-brown">{offer.condition}</span>}
+                </div>
+                <p className="mt-1 flex items-start gap-1.5 text-xs text-muted">
+                  <ShieldCheckIcon size={14} className="mt-px shrink-0 text-success" /> {offer.match_reason}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-semibold text-brown">{formatPrice(total(offer), offer.currency)}</p>
+                <p className="text-xs text-muted">
+                  {offer.shipping === null
+                    ? 'Shipping not listed'
+                    : offer.shipping === 0
+                      ? 'Free shipping'
+                      : `incl. ${formatPrice(offer.shipping, offer.currency)} shipping`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={offer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full bg-brown px-5 py-2.5 text-sm font-medium whitespace-nowrap text-white hover:bg-brown-light"
+                >
+                  View deal
+                </a>
+                <HeartButton
+                  item={{
+                    item_id: item.id,
+                    title: offer.title,
+                    url: offer.url,
+                    retailer: offer.retailer,
+                    image_url: offer.image_url ?? item.image_url,
+                    price: offer.price,
+                    currency: offer.currency,
+                  }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
-      <p className="mt-3 text-xs text-muted">
-        Prices come from retailer listings indexed by Google Shopping and may have changed. Shipping
-        shown where the retailer lists it. Matches are verified by AI.
+      <p className="mt-6 text-center text-xs leading-relaxed text-muted">
+        Prices are read from each retailer&rsquo;s product page or eBay listing and may have changed.
+        Matches are verified by AI (or by barcode).
       </p>
       <RefreshNote at={result.data.checked_at} onRefresh={reload} />
     </div>
@@ -283,21 +364,34 @@ function PricesTab({ item }: { item: Item }) {
 
 function RefreshNote({ at, onRefresh }: { at: string; onRefresh: () => void }) {
   return (
-    <p className="mt-4 text-xs text-muted">
+    <p className="mt-6 text-center text-xs text-muted">
       Searched {new Date(at).toLocaleString()} ·{' '}
-      <button type="button" onClick={onRefresh} className="underline">
+      <button type="button" onClick={onRefresh} className="font-medium text-brown underline">
         Search again
       </button>
     </p>
   )
 }
 
+function LoadingNote({ children }: { children: string }) {
+  return (
+    <div className="flex flex-col items-center gap-4 py-10 text-center text-muted">
+      <span className="size-9 animate-spin rounded-full border-2 border-line border-t-brown" />
+      <p>{children}</p>
+    </div>
+  )
+}
+
+function PageMessage({ children }: { children: React.ReactNode }) {
+  return <div className="mx-auto max-w-7xl px-4 py-16 text-muted sm:px-6">{children}</div>
+}
+
 function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+    <div role="alert" className="mx-auto max-w-2xl rounded-2xl bg-red-50 p-4 text-center text-sm text-red-800">
       {message}
       {onRetry && (
-        <button type="button" onClick={onRetry} className="ml-3 underline">
+        <button type="button" onClick={onRetry} className="ml-3 font-medium underline">
           Try again
         </button>
       )}

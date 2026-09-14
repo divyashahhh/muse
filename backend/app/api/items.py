@@ -2,13 +2,13 @@ import uuid
 from datetime import UTC, datetime
 from itertools import count
 
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import Session
-from app.deps import ProductAIDep, SearchDep, StorageDep
+from app.deps import ClientId, OptionalClientId, ProductAIDep, SearchDep, StorageDep
 from app.models import Item, Listing, ListingKind
 from app.schemas import (
     DiscoverOut,
@@ -17,13 +17,14 @@ from app.schemas import (
     ItemOut,
     ListingOut,
     PriceComparisonOut,
+    RecentItemOut,
     ReferencePrice,
 )
 from app.services import discover as discover_service
 from app.services import ingest
 from app.services import prices as prices_service
 from app.services.errors import InvalidImageError
-from app.services.search import FoundListing
+from app.services.sources import FoundListing
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -32,12 +33,17 @@ DISCOVER_KINDS = (ListingKind.VISUAL_MATCH, ListingKind.AESTHETIC, ListingKind.S
 
 @router.post("/upload", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
 async def create_from_upload(
-    file: UploadFile, session: Session, storage: StorageDep, ai: ProductAIDep
+    file: UploadFile,
+    session: Session,
+    storage: StorageDep,
+    ai: ProductAIDep,
+    client_id: OptionalClientId,
 ) -> ItemOut:
     data = await file.read(get_settings().max_upload_bytes + 1)
     if len(data) > get_settings().max_upload_bytes:
         raise InvalidImageError("Images must be 10 MB or smaller.")
     item = await ingest.item_from_upload(data, storage, ai)
+    item.client_id = client_id
     session.add(item)
     await session.commit()
     return item_out(item)
@@ -45,12 +51,51 @@ async def create_from_upload(
 
 @router.post("/from-url", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
 async def create_from_url(
-    body: ItemFromUrlIn, session: Session, storage: StorageDep, ai: ProductAIDep
+    body: ItemFromUrlIn,
+    session: Session,
+    storage: StorageDep,
+    ai: ProductAIDep,
+    client_id: OptionalClientId,
 ) -> ItemOut:
     item = await ingest.item_from_url(str(body.url), storage, ai)
+    item.client_id = client_id
     session.add(item)
     await session.commit()
     return item_out(item)
+
+
+@router.get("/recent", response_model=list[RecentItemOut])
+async def recent_items(
+    session: Session, client_id: ClientId, limit: int = 60
+) -> list[RecentItemOut]:
+    """Items this browser searched, newest first."""
+    items = await session.scalars(
+        select(Item)
+        .where(Item.client_id == client_id)
+        .order_by(Item.created_at.desc())
+        .limit(min(max(limit, 1), 200))
+    )
+    return [
+        RecentItemOut.model_validate(
+            {
+                **{f: getattr(item, f) for f in RecentItemOut.model_fields if hasattr(item, f)},
+                "product_name": item.analysis.get("product_name", ""),
+                "category": item.analysis.get("category", ""),
+            }
+        )
+        for item in items
+    ]
+
+
+@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_recent(item_id: uuid.UUID, session: Session, client_id: ClientId) -> Response:
+    """Remove an item from this browser's Recents (and its cached results)."""
+    item = await _get_item(session, item_id)
+    if item.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Item not found.")
+    await session.delete(item)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{item_id}", response_model=ItemOut)
@@ -60,12 +105,12 @@ async def get_item(item_id: uuid.UUID, session: Session) -> ItemOut:
 
 @router.post("/{item_id}/discover", response_model=DiscoverOut)
 async def discover(
-    item_id: uuid.UUID, session: Session, search: SearchDep, refresh: bool = False
+    item_id: uuid.UUID, session: Session, search: SearchDep, ai: ProductAIDep, refresh: bool = False
 ) -> DiscoverOut:
     """Run discovery searches, or return the cached results from a previous run."""
     item = await _get_item(session, item_id, lock=True)
     if item.discovered_at is None or refresh:
-        groups = await discover_service.discover(item, search)
+        groups = await discover_service.discover(item, search, ai)
         await session.execute(
             delete(Listing).where(Listing.item_id == item.id, Listing.kind.in_(DISCOVER_KINDS))
         )
@@ -129,12 +174,7 @@ async def compare_prices(
 
 
 def item_out(item: Item) -> ItemOut:
-    return ItemOut.model_validate(
-        {
-            **{c: getattr(item, c) for c in ItemOut.model_fields if hasattr(item, c)},
-            "visual_search_available": item.search_image_url is not None,
-        }
-    )
+    return ItemOut.model_validate(item)
 
 
 async def _get_item(session: AsyncSession, item_id: uuid.UUID, lock: bool = False) -> Item:

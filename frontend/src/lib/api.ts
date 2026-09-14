@@ -1,7 +1,6 @@
 // Typed client for the Muse API. Types mirror backend/app/schemas.py.
 
 export type ListingKind = 'visual_match' | 'aesthetic' | 'similar_brand' | 'offer'
-export type SavedListName = 'bag' | 'wishlist'
 
 export interface ItemAnalysis {
   category: string
@@ -15,6 +14,7 @@ export interface ItemAnalysis {
   price_tier: string
   summary: string
   exact_match_query: string
+  visual_query: string
   aesthetic_queries: { label: string; query: string }[]
   similar_brands: string[]
 }
@@ -24,7 +24,6 @@ export interface Item {
   source: 'upload' | 'url'
   source_url: string | null
   image_url: string
-  visual_search_available: boolean
   title: string | null
   brand: string | null
   retailer: string | null
@@ -66,9 +65,24 @@ export interface PriceComparison {
   offers: Listing[]
 }
 
-export interface SavedItem {
+export interface RecentItem {
+  id: string
+  source: 'upload' | 'url'
+  image_url: string
+  title: string | null
+  brand: string | null
+  retailer: string | null
+  price: number | null
+  currency: string | null
+  product_name: string
+  category: string
+  created_at: string
+  discovered_at: string | null
+  prices_checked_at: string | null
+}
+
+export interface WishlistItem {
   id: number
-  list: SavedListName
   item_id: string | null
   title: string
   url: string
@@ -79,7 +93,7 @@ export interface SavedItem {
   created_at: string
 }
 
-export type SavedItemInput = Omit<SavedItem, 'id' | 'created_at'>
+export type WishlistInput = Omit<WishlistItem, 'id' | 'created_at'>
 
 export class ApiError extends Error {
   readonly status: number
@@ -93,7 +107,7 @@ export class ApiError extends Error {
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 const CLIENT_ID_KEY = 'muse-client-id'
 
-/** Anonymous per-browser id that scopes the bag and wishlist until accounts exist. */
+/** Anonymous per-browser id that scopes Recents and the wishlist until accounts exist. */
 function clientId(): string {
   try {
     let id = localStorage.getItem(CLIENT_ID_KEY)
@@ -135,10 +149,11 @@ export const api = {
   comparePrices: (id: string, refresh = false) =>
     request<PriceComparison>(`/items/${id}/prices?refresh=${refresh}`, { method: 'POST' }),
 
-  listSaved: () => request<SavedItem[]>('/saved'),
-  save: (item: SavedItemInput) =>
-    request<SavedItem>('/saved', { method: 'POST', body: JSON.stringify(item) }),
-  moveSaved: (id: number, list: SavedListName) =>
-    request<SavedItem>(`/saved/${id}`, { method: 'PATCH', body: JSON.stringify({ list }) }),
-  removeSaved: (id: number) => request<void>(`/saved/${id}`, { method: 'DELETE' }),
+  recentItems: () => request<RecentItem[]>('/items/recent'),
+  removeRecent: (id: string) => request<void>(`/items/${id}`, { method: 'DELETE' }),
+
+  wishlist: () => request<WishlistItem[]>('/wishlist'),
+  addToWishlist: (item: WishlistInput) =>
+    request<WishlistItem>('/wishlist', { method: 'POST', body: JSON.stringify(item) }),
+  removeFromWishlist: (id: number) => request<void>(`/wishlist/${id}`, { method: 'DELETE' }),
 }

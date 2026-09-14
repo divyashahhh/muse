@@ -1,24 +1,17 @@
 """Feature 2: find the exact same product at other retailers and compare prices.
 
-Candidates come from three places: Google Lens exact image matches, a Google Shopping
-search for the precise product name, and the store list Google has grouped under the best
-Shopping result. Claude then verifies each candidate really is the same product, so
-look-alikes never pollute the comparison.
+Every free source is searched for the precise product (and its barcode, when the original
+page published one). Listings with a matching GTIN are accepted outright; the rest are
+checked by the AI so look-alikes and other colourways never enter the comparison.
 """
 
-import asyncio
-import logging
 from dataclasses import dataclass
+from decimal import Decimal
 
 from app.models import Item
 from app.services.ai import ItemAnalysis, OfferCandidate, ProductAI
-from app.services.errors import UpstreamError
-from app.services.search import FoundListing, SerpApiClient
+from app.services.sources import FoundListing, ProductSearch
 
-log = logging.getLogger(__name__)
-
-SHOPPING_RESULTS_TO_CHECK = 6
-PRODUCTS_TO_EXPAND = 2  # top Shopping results whose full store lists we fetch
 MAX_CANDIDATES = 40
 
 
@@ -28,31 +21,20 @@ class VerifiedOffer:
     reason: str
 
 
-async def compare_prices(item: Item, search: SerpApiClient, ai: ProductAI) -> list[VerifiedOffer]:
+async def compare_prices(item: Item, search: ProductSearch, ai: ProductAI) -> list[VerifiedOffer]:
     analysis = ItemAnalysis.model_validate(item.analysis)
+    gtin = item_gtin(item)
 
-    lens_call = (
-        search.lens(item.search_image_url, "exact_matches") if item.search_image_url else _empty()
-    )
-    lens_results, shopping_results = await asyncio.gather(
-        lens_call, search.shopping(analysis.exact_match_query), return_exceptions=True
-    )
-    if isinstance(lens_results, BaseException) and isinstance(shopping_results, BaseException):
-        raise UpstreamError("Price search is unavailable right now. Please try again.")
-    lens_results = _or_empty(lens_results, "lens exact matches")
-    shopping_results = _or_empty(shopping_results, "shopping")[:SHOPPING_RESULTS_TO_CHECK]
+    listings = await search.search(analysis.exact_match_query, gtin=gtin)
+    candidates = _unique_priced(listings, exclude_url=item.source_url)[:MAX_CANDIDATES]
 
-    tokens = [r.offers_token for r in shopping_results if r.offers_token][:PRODUCTS_TO_EXPAND]
-    store_lists = await asyncio.gather(
-        *(_tolerant(search.product_offers(token), "product offers") for token in tokens)
-    )
-
-    candidates = _dedupe(
-        [*(offer for stores in store_lists for offer in stores), *lens_results, *shopping_results],
-        exclude_url=item.source_url,
-    )[:MAX_CANDIDATES]
-    if not candidates:
-        return []
+    offers: list[VerifiedOffer] = []
+    to_verify: list[FoundListing] = []
+    for listing in candidates:
+        if gtin and listing.gtin and _same_gtin(gtin, listing.gtin):
+            offers.append(VerifiedOffer(listing, "Same barcode (GTIN) as the original product."))
+        else:
+            to_verify.append(listing)
 
     verdicts = await ai.verify_offers(
         analysis,
@@ -65,49 +47,48 @@ async def compare_prices(item: Item, search: SerpApiClient, ai: ProductAI) -> li
                 currency=c.currency,
                 condition=c.condition,
             )
-            for c in candidates
+            for c in to_verify
         ],
     )
-    return [
-        VerifiedOffer(listing=candidates[v.index], reason=v.reason)
-        for v in verdicts
-        if v.verdict == "same_product"
+    offers += [
+        VerifiedOffer(to_verify[v.index], v.reason) for v in verdicts if v.verdict == "same_product"
     ]
+    return _cheapest_per_retailer(offers)
 
 
-def _dedupe(listings: list[FoundListing], exclude_url: str | None) -> list[FoundListing]:
-    """Keep priced listings, one per retailer (the cheapest), skipping the user's own link."""
-    best: dict[str, FoundListing] = {}
+def item_gtin(item: Item) -> str | None:
+    identifiers = item.identifiers or {}
+    return next((v for k, v in identifiers.items() if k.startswith("gtin") and v), None)
+
+
+def total(listing: FoundListing) -> Decimal:
+    return (listing.price or Decimal(0)) + (listing.shipping or Decimal(0))
+
+
+def _unique_priced(listings: list[FoundListing], exclude_url: str | None) -> list[FoundListing]:
+    seen: set[str] = set()
+    unique = []
     for listing in listings:
-        if listing.price is None or listing.url == exclude_url:
+        if listing.price is None or listing.url == exclude_url or listing.url in seen:
             continue
-        key = (listing.retailer or listing.url).strip().lower()
-        current = best.get(key)
-        if current is None or _total(listing) < _total(current):
-            best[key] = listing
-    return sorted(best.values(), key=_total)
+        seen.add(listing.url)
+        unique.append(listing)
+    return unique
 
 
-def _total(listing: FoundListing):
-    return (listing.price or 0) + (listing.shipping or 0)
+def _cheapest_per_retailer(offers: list[VerifiedOffer]) -> list[VerifiedOffer]:
+    """One row per retailer and condition, keeping the lowest total."""
+    best: dict[tuple[str, str], VerifiedOffer] = {}
+    for offer in offers:
+        listing = offer.listing
+        # All eBay sellers count as one marketplace row per condition.
+        retailer = "ebay" if listing.provider == "ebay" else (listing.retailer or listing.url)
+        key = (retailer.strip().lower(), (listing.condition or "").lower())
+        if key not in best or total(listing) < total(best[key].listing):
+            best[key] = offer
+    return sorted(best.values(), key=lambda o: total(o.listing))
 
 
-def _or_empty(result: list[FoundListing] | BaseException, label: str) -> list[FoundListing]:
-    if isinstance(result, UpstreamError):
-        log.warning("Price search (%s) failed: %s", label, result)
-        return []
-    if isinstance(result, BaseException):
-        raise result
-    return result
-
-
-async def _tolerant(call, label: str) -> list[FoundListing]:
-    try:
-        return await call
-    except UpstreamError as exc:
-        log.warning("Price search (%s) failed: %s", label, exc)
-        return []
-
-
-async def _empty() -> list[FoundListing]:
-    return []
+def _same_gtin(a: str, b: str) -> bool:
+    # UPC-A (12 digits) and EAN-13 differ only by a leading zero.
+    return a.lstrip("0") == b.lstrip("0")

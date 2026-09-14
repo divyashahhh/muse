@@ -20,7 +20,6 @@ async def item_from_upload(data: bytes, storage: ImageStorage, ai: ProductAI) ->
         source=ItemSource.UPLOAD,
         image_key=stored.key,
         image_url=stored.url,
-        search_image_url=stored.url if stored.internet_reachable else None,
         analysis=analysis.model_dump(mode="json"),
     )
 
@@ -50,12 +49,11 @@ async def item_from_url(url: str, storage: ImageStorage, ai: ProductAI) -> Item:
         source_url=resource.url,
         image_key=stored.key,
         image_url=stored.url,
-        # The retailer's own image is public, so Lens can use it even without cloud storage.
-        search_image_url=image_url,
         title=page.title if page else None,
         brand=(page.brand if page else None) or analysis.brand,
         retailer=page.retailer if page else None,
         price=page.price if page else None,
         currency=page.currency if page else None,
+        identifiers=page.identifiers if page else {},
         analysis=analysis.model_dump(mode="json"),
     )

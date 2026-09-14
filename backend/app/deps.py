@@ -12,7 +12,9 @@ from app.services.ai import ProductAI
 from app.services.ai_claude import ClaudeProductAI
 from app.services.ai_gemini import GeminiProductAI, gemini_client
 from app.services.errors import NotConfiguredError
-from app.services.search import SerpApiClient
+from app.services.sources import ProductSearch, ProductSource
+from app.services.sources.ebay import EbaySource
+from app.services.sources.tavily import TavilySource
 from app.services.storage import ImageStorage, LocalImageStorage, SupabaseImageStorage
 
 
@@ -32,13 +34,25 @@ def get_product_ai() -> ProductAI:
 
 
 @lru_cache
-def get_search() -> SerpApiClient:
+def get_search() -> ProductSearch:
     settings = get_settings()
-    if not settings.serpapi_api_key:
-        raise NotConfiguredError("Product search isn't configured: set SERPAPI_API_KEY.")
-    return SerpApiClient(
-        settings.serpapi_api_key, country=settings.search_country, language=settings.search_language
-    )
+    sources: list[ProductSource] = []
+    if settings.ebay_client_id and settings.ebay_client_secret:
+        sources.append(
+            EbaySource(
+                settings.ebay_client_id,
+                settings.ebay_client_secret,
+                marketplace=settings.ebay_marketplace,
+            )
+        )
+    if settings.tavily_api_key:
+        sources.append(TavilySource(settings.tavily_api_key))
+    if not sources:
+        raise NotConfiguredError(
+            "Product search isn't configured: set TAVILY_API_KEY and/or EBAY_CLIENT_ID and "
+            "EBAY_CLIENT_SECRET (both have free tiers)."
+        )
+    return ProductSearch(sources)
 
 
 @lru_cache
@@ -54,14 +68,23 @@ def get_storage() -> ImageStorage:
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 
-def get_client_id(x_muse_client: Annotated[str | None, Header()] = None) -> str:
+def get_optional_client_id(x_muse_client: Annotated[str | None, Header()] = None) -> str | None:
     """Anonymous per-browser id until accounts exist."""
-    if not x_muse_client or not _CLIENT_ID.fullmatch(x_muse_client):
-        raise HTTPException(status_code=400, detail="Missing or invalid X-Muse-Client header.")
+    if x_muse_client is None:
+        return None
+    if not _CLIENT_ID.fullmatch(x_muse_client):
+        raise HTTPException(status_code=400, detail="Invalid X-Muse-Client header.")
     return x_muse_client
 
 
+def get_client_id(client_id: Annotated[str | None, Depends(get_optional_client_id)]) -> str:
+    if client_id is None:
+        raise HTTPException(status_code=400, detail="Missing X-Muse-Client header.")
+    return client_id
+
+
 ProductAIDep = Annotated[ProductAI, Depends(get_product_ai)]
-SearchDep = Annotated[SerpApiClient, Depends(get_search)]
+SearchDep = Annotated[ProductSearch, Depends(get_search)]
 StorageDep = Annotated[ImageStorage, Depends(get_storage)]
 ClientId = Annotated[str, Depends(get_client_id)]
+OptionalClientId = Annotated[str | None, Depends(get_optional_client_id)]

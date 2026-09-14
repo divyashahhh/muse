@@ -43,31 +43,25 @@ class ItemSource(enum.StrEnum):
 
 
 class ListingKind(enum.StrEnum):
-    VISUAL_MATCH = "visual_match"  # looks like the item (Google Lens)
+    VISUAL_MATCH = "visual_match"  # looks like the item
     AESTHETIC = "aesthetic"  # different item, same style (AI-generated queries)
     SIMILAR_BRAND = "similar_brand"  # comparable brands selling this kind of item
     OFFER = "offer"  # the exact same product at another retailer (price comparison)
 
 
-class SavedList(enum.StrEnum):
-    BAG = "bag"
-    WISHLIST = "wishlist"
-
-
 class Item(Base):
-    """A product the user showed Muse, plus Claude's analysis of it."""
+    """A product the user showed Muse, plus the AI's analysis of it."""
 
     __tablename__ = "items"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # Anonymous browser that searched this item; powers "Recents".
+    client_id: Mapped[str | None] = mapped_column(String(64), index=True)
     source: Mapped[ItemSource] = mapped_column(str_enum(ItemSource, "item_source"))
     source_url: Mapped[str | None] = mapped_column(Text)
     # Our stored copy of the image (normalised JPEG), for display.
     image_key: Mapped[str] = mapped_column(Text)
     image_url: Mapped[str] = mapped_column(Text)
-    # An internet-reachable image URL for Google Lens; null when none is available
-    # (e.g. an upload stored on local disk in development).
-    search_image_url: Mapped[str | None] = mapped_column(Text)
 
     # Facts read from the product page, when the item came from a URL.
     title: Mapped[str | None] = mapped_column(String(500))
@@ -75,8 +69,10 @@ class Item(Base):
     retailer: Mapped[str | None] = mapped_column(String(200))
     price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     currency: Mapped[str | None] = mapped_column(String(8))
+    # gtin / mpn / sku from the product page; a GTIN lets price comparison match exactly.
+    identifiers: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default="{}")
 
-    # ItemAnalysis (see app/services/analysis.py), stored as JSON.
+    # ItemAnalysis (see app/services/ai.py), stored as JSON.
     analysis: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
     # Set when each search last ran, so results are served from cache afterwards.
@@ -117,7 +113,7 @@ class Listing(Base):
     condition: Mapped[str | None] = mapped_column(String(64))
     rating: Mapped[float | None] = mapped_column(Float)
     reviews: Mapped[int | None] = mapped_column(Integer)
-    # Why Claude judged an offer to be the same product.
+    # Why the offer was judged to be the same product.
     match_reason: Mapped[str | None] = mapped_column(Text)
     provider: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -126,18 +122,17 @@ class Listing(Base):
 
 
 class SavedItem(Base):
-    """A listing the user put in their bag or wishlist.
+    """A listing the user added to their wishlist.
 
     Listing details are snapshotted so saved items survive result refreshes. Users are
     anonymous for now, identified by a client-generated id sent in the X-Muse-Client header.
     """
 
     __tablename__ = "saved_items"
-    __table_args__ = (UniqueConstraint("client_id", "list", "url"),)
+    __table_args__ = (UniqueConstraint("client_id", "url"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[str] = mapped_column(String(64), index=True)
-    list: Mapped[SavedList] = mapped_column(str_enum(SavedList, "saved_list"))
     item_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("items.id", ondelete="SET NULL"))
 
     title: Mapped[str] = mapped_column(Text)

@@ -12,40 +12,43 @@ UI polish is deliberately deferred; this is the working proof of concept.
 
 ## How it works
 
+Muse runs entirely on free tiers.
+
 ```
- upload / URL ──► fetch page (SSRF-guarded) ──► schema.org / Open Graph product facts
+ upload / URL ──► fetch page (SSRF-guarded) ──► schema.org / Open Graph product facts (+ GTIN)
                          │
                          ▼
-                 normalise image (Pillow) ──► store (Supabase Storage | local disk)
+                 normalise image (Pillow) ──► store (local disk | Supabase Storage)
                          │
                          ▼
-     AI vision analysis (Gemini|Claude) ──► identity (brand, model, colourway, category)
-                                   + search plan (exact-match query, aesthetic queries,
-                                     similar brands)
+          Gemini vision analysis ──► identity (brand, model, colourway, category)
+                                     + search plan (exact-match, look-alike and
+                                       aesthetic queries, similar brands)
                          │
         ┌────────────────┴──────────────────┐
         ▼                                   ▼
    DISCOVER                             COMPARE PRICES
-   Google Lens visual matches           Google Lens exact matches
-   Google Shopping × aesthetic queries   Google Shopping (exact-match query)
-   Google Shopping × similar brands     └► Google product store lists (price/shipping/total)
+   eBay Browse API  ┐                   eBay Browse API (query + GTIN)  ┐
+   Tavily web search├─► per query       Tavily web search               ├─► candidates
+   → product pages  ┘                   → product pages                 ┘
         │                                   │
-        │                              dedupe (cheapest per retailer)
-        │                                   ▼
-        │                              AI verifies "same product?" per listing
-        ▼                                   ▼
+   Gemini relevance filter             GTIN match ─► accepted
+   (drops keyword-search noise)        otherwise Gemini "same product?" check
+        │                                   │
+        ▼                              cheapest per retailer, sorted by price + shipping
    listings table (cached per item) ◄───────┘
 ```
 
-- **Real retailer data, legally sourced.** Search results come from Google Lens and Google
-  Shopping through [SerpApi](https://serpapi.com), not by scraping retailer sites. The only page
-  Muse fetches directly is the single product link a user pastes.
-- **AI where judgement is needed.** A vision model turns an image into a precise identity and
-  search plan, and decides which price-comparison results are genuinely the same product rather
-  than look-alikes. Providers are swappable via `AI_PROVIDER`: **Google Gemini** (default, free
-  tier) or **Anthropic Claude** (`claude-sonnet-5`, paid). Both return schema-validated JSON.
-- **Results are cached** per item in Postgres, so reopening an item doesn't spend searches again.
-  "Search again" forces a refresh.
+- **Real listings, officially sourced.** eBay results come from eBay's public Browse API. Web
+  results come from Tavily's search API. Muse then reads each result page itself and keeps it
+  only if the retailer's own schema.org data describes a product with a price and image, so
+  articles, category pages and blocked sites drop out.
+- **Prices are never AI-generated.** They come from eBay's API or the retailer's structured data.
+- **AI where judgement is needed.** Gemini (free tier; Claude optional via `AI_PROVIDER`)
+  identifies the item and plans searches, filters discovery results for relevance, and checks
+  which price-comparison listings are genuinely the same product. A matching barcode (GTIN) is
+  accepted without AI.
+- **Results are cached** per item in Postgres, so reopening an item doesn't spend quota again.
 
 ### Data model
 
@@ -71,20 +74,17 @@ Interactive docs: `http://localhost:8000/docs`.
 
 ## Setup
 
-### API keys
+### API keys (all free)
 
-| Key | For | Required |
+| Key | For | Free tier |
 |---|---|---|
-| `GEMINI_API_KEY` | Item analysis and price-match verification (free: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) | Yes, or Claude |
-| `ANTHROPIC_API_KEY` + `AI_PROVIDER=claude` | Same, using Claude instead (paid) | Optional |
-| `SERPAPI_API_KEY` | Google Lens + Shopping results (free plan: 250 searches/month) | Yes |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Public storage for uploads, so visual search works on photos | Recommended |
+| `GEMINI_API_KEY` | Analysis, relevance filtering, same-product checks | [aistudio.google.com/apikey](https://aistudio.google.com/apikey), no card |
+| `TAVILY_API_KEY` | Web search for retailer product pages | [app.tavily.com](https://app.tavily.com): 1,000 credits/month, no card |
+| `EBAY_CLIENT_ID` + `EBAY_CLIENT_SECRET` | eBay new and pre-owned listings | [developer.ebay.com](https://developer.ebay.com/my/keys): 5,000 calls/day |
 
-Without Supabase, uploads are stored on local disk and Google Lens can't see them, so photo
-uploads get AI-query results only. Pasted product links always get visual search, because the
-retailer's image is already public. Create a **public** bucket named `uploads` in Supabase Storage.
-
-Each item uses roughly 5–8 SerpApi searches for discovery and 3–4 for price comparison.
+Search needs at least one of Tavily or eBay; both give the best coverage. Each item uses about
+7 Tavily credits for discovery and 1 for price comparison, and 3 Gemini requests.
+`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` are optional (image storage for deployments without a disk).
 
 ### Run locally
 
@@ -112,15 +112,16 @@ cd frontend && npm run lint && npm run build
 ```
 
 Backend tests run against `muse_test` (override with `TEST_DATABASE_URL`) using the real Alembic
-migrations, with the AI provider, SerpApi and storage replaced by fakes (the Gemini client is
-exercised through its real SDK against a mock HTTP transport), so no keys or network are needed.
+migrations, with the AI provider, search sources and storage replaced by fakes (the Gemini, eBay and
+Tavily clients are exercised against mock HTTP transports), so no keys or network are needed.
 
 ## Known limitations / next steps
 
-- Some retailers (e.g. Zara) block automated page fetches; users are asked to upload a photo instead.
-- Price verification is text-based (titles, retailer, price); adding listing images to the
-  verification call would catch colourway mismatches that titles hide.
-- Prices mix currencies when results do; the market is set by `SEARCH_COUNTRY`.
-- Discovery results aren't re-ranked yet. Next candidates: CLIP embeddings + pgvector for visual
-  re-ranking, and Claude filtering of off-aesthetic results.
+- There's no free reverse image search, so "Looks like this" uses an AI-written visual
+  description plus AI filtering rather than pixel similarity. CLIP embeddings could re-rank by
+  image similarity later.
+- Retailers that block automated access or render prices only with JavaScript (e.g. Zara, H&M,
+  Nike) can't be read, so they won't appear in results. eBay covers many of those products.
+- Currency depends on the market each site serves (e.g. SGD for a Singapore connection); totals
+  across currencies aren't converted.
 - Accounts (to sync bag/wishlist across devices), background jobs with progress updates, and UI design.

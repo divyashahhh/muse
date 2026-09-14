@@ -17,7 +17,7 @@ class InvalidImageError(ServiceError):
 
 
 class UpstreamError(ServiceError):
-    """An external API (Claude, SerpApi, storage) failed."""
+    """An external API (AI, search, storage) failed."""
 
     status_code = 502
 

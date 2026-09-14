@@ -25,9 +25,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5"
 
-    serpapi_api_key: str = ""
-    search_country: str = "us"
-    search_language: str = "en"
+    # Free search sources; each is enabled when its credentials are set.
+    tavily_api_key: str = ""
+    ebay_client_id: str = ""
+    ebay_client_secret: str = ""
+    ebay_marketplace: str = "EBAY_US"
 
     supabase_url: str = ""
     supabase_service_key: str = ""

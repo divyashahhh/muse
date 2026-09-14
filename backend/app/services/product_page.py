@@ -4,6 +4,7 @@ Prefers schema.org Product JSON-LD (what retailers publish for Google Shopping),
 falls back to Open Graph / product meta tags.
 """
 
+import html
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
+
+IN_STOCK = {"InStock", "LimitedAvailability", "OnlineOnly", "InStoreOnly", "PreOrder", "PreSale"}
 
 
 @dataclass
@@ -24,16 +27,21 @@ class PageProduct:
     image_url: str | None = None
     price: Decimal | None = None
     currency: str | None = None
+    in_stock: bool | None = None
+    # True when the page declares itself a product (schema.org Product or product price meta),
+    # as opposed to an article or category page that merely has a title and image.
+    has_product_data: bool = False
     # gtin / mpn / sku — the strongest signals for finding the exact same product elsewhere.
     identifiers: dict[str, str] = field(default_factory=dict)
 
 
-def parse_product_page(html: str | bytes, url: str) -> PageProduct:
-    soup = BeautifulSoup(html, "html.parser")
+def parse_product_page(markup: str | bytes, url: str) -> PageProduct:
+    soup = BeautifulSoup(markup, "html.parser")
     product = PageProduct(url=url)
 
     for node in _json_ld_products(soup):
         _apply_json_ld(product, node)
+        product.has_product_data = True
         break
 
     meta = _meta_tags(soup)
@@ -43,6 +51,7 @@ def parse_product_page(html: str | bytes, url: str) -> PageProduct:
     product.brand = product.brand or meta.get("product:brand") or meta.get("og:brand")
     if product.price is None:
         product.price = _decimal(meta.get("product:price:amount") or meta.get("og:price:amount"))
+        product.has_product_data = product.has_product_data or product.price is not None
         product.currency = (
             product.currency or meta.get("product:price:currency") or meta.get("og:price:currency")
         )
@@ -79,7 +88,8 @@ def _find_products(data: Any) -> Iterator[dict[str, Any]]:
             variants = data.get("hasVariant") or []
             merged = {**data, **(variants[0] if variants and isinstance(variants[0], dict) else {})}
             yield merged
-        for key in ("@graph", "mainEntity", "itemListElement"):
+        # Not itemListElement: a category page listing products isn't a product page.
+        for key in ("@graph", "mainEntity"):
             if key in data:
                 yield from _find_products(data[key])
 
@@ -96,6 +106,9 @@ def _apply_json_ld(product: PageProduct, node: dict[str, Any]) -> None:
     if isinstance(offer, dict):
         product.price = _decimal(offer.get("price") or offer.get("lowPrice"))
         product.currency = _as_text(offer.get("priceCurrency"))
+        availability = _as_text(offer.get("availability"))
+        if availability:
+            product.in_stock = availability.rstrip("/").rsplit("/", 1)[-1] in IN_STOCK
         spec = offer.get("priceSpecification")
         if product.price is None and isinstance(spec, dict):
             product.price = _decimal(spec.get("price"))
@@ -127,7 +140,8 @@ def _first_image(value: Any) -> str | None:
 
 def _as_text(value: Any) -> str | None:
     if isinstance(value, (str, int, float)) and str(value).strip():
-        return str(value).strip()
+        # JSON-LD strings sometimes carry HTML entities (e.g. "Rollneck&trade;").
+        return html.unescape(str(value)).strip()
     return None
 
 

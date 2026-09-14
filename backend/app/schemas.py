@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
-from app.models import ItemSource, ListingKind, SavedList
+from app.models import ItemSource, ListingKind
 from app.services.ai import ItemAnalysis
 
 
@@ -25,7 +25,6 @@ class ItemOut(ORMModel):
     source: ItemSource
     source_url: str | None
     image_url: str
-    visual_search_available: bool
     title: str | None
     brand: str | None
     retailer: str | None
@@ -33,6 +32,22 @@ class ItemOut(ORMModel):
     currency: str | None
     analysis: ItemAnalysis
     created_at: datetime
+
+
+class RecentItemOut(ORMModel):
+    id: uuid.UUID
+    source: ItemSource
+    image_url: str
+    title: str | None
+    brand: str | None
+    retailer: str | None
+    price: float | None
+    currency: str | None
+    product_name: str
+    category: str
+    created_at: datetime
+    discovered_at: datetime | None
+    prices_checked_at: datetime | None
 
 
 class ListingOut(ORMModel):
@@ -83,7 +98,6 @@ class PriceComparisonOut(BaseModel):
 
 
 class SavedItemIn(BaseModel):
-    list: SavedList
     title: str = Field(min_length=1, max_length=1000)
     url: AnyHttpUrl
     retailer: str | None = Field(default=None, max_length=200)
@@ -93,13 +107,8 @@ class SavedItemIn(BaseModel):
     item_id: uuid.UUID | None = None
 
 
-class SavedItemMove(BaseModel):
-    list: SavedList
-
-
 class SavedItemOut(ORMModel):
     id: int
-    list: SavedList
     item_id: uuid.UUID | None
     title: str
     url: str

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, items, saved
+from app.api import health, items, wishlist
 from app.config import get_settings
 from app.services.errors import ServiceError
 
@@ -29,7 +29,7 @@ def create_app() -> FastAPI:
     api = APIRouter(prefix="/api")
     api.include_router(health.router)
     api.include_router(items.router)
-    api.include_router(saved.router)
+    api.include_router(wishlist.router)
     app.include_router(api)
 
     # Locally stored uploads (development; production uses Supabase Storage).
