@@ -17,9 +17,15 @@ from sqlalchemy import text  # noqa: E402
 
 from alembic import command  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.deps import get_product_ai, get_search, get_storage  # noqa: E402
+from app.deps import (  # noqa: E402
+    get_product_ai,
+    get_search,
+    get_storage,
+    get_visual_similarity,
+)
 from app.main import app  # noqa: E402
 from app.services.ai import AestheticQuery, ItemAnalysis, OfferVerdict  # noqa: E402
+from app.services.embeddings import VisualSimilarity  # noqa: E402
 from app.services.sources import FoundListing, ProductSearch  # noqa: E402
 from app.services.storage import StoredImage  # noqa: E402
 
@@ -83,15 +89,20 @@ class FakeAI:
         self.analyzed_pages.append(page)
         return ANALYSIS
 
-    async def filter_relevant(self, analysis, listings) -> set[int]:
+    async def grade_relevance(self, analysis, listings) -> dict[int, int]:
         self.filtered.append(listings)
-        return {i for i, item in enumerate(listings) if "gift card" not in item.title}
+        return {i: 0 if "gift card" in item.title else 2 for i, item in enumerate(listings)}
 
     async def verify_offers(self, analysis, page_title, candidates) -> list[OfferVerdict]:
+        self.verified = candidates
         return [
             OfferVerdict(
                 index=i,
+                brand="match",
+                model="match" if "Samba OG" in c.title else "mismatch",
+                color="match",
                 verdict="same_product" if "Samba OG" in c.title else "different_product",
+                confidence=0.9,
                 reason="Same model and colourway." if "Samba OG" in c.title else "Other model.",
             )
             for i, c in enumerate(candidates)
@@ -138,6 +149,35 @@ class FakeStorage:
     async def save_jpeg(self, data: bytes) -> StoredImage:
         return StoredImage(key="k.jpg", url="https://cdn.example/k.jpg")
 
+    async def read_jpeg(self, key: str) -> bytes | None:
+        return None
+
+
+class FakeEmbedder:
+    """Deterministic embeddings: one axis per keyword, so similarity is predictable.
+
+    Images are identified by their bytes (FakeVision serves the URL as the "image").
+    """
+
+    AXES = ("shoe", "jacket", "jeans", "gift")
+
+    def _vector(self, text: str) -> list[float]:
+        vector = [1.0 if axis in text.lower() else 0.0 for axis in self.AXES]
+        return [*vector, 0.1]  # never all-zero
+
+    async def embed_images(self, images_jpeg) -> list[list[float]]:
+        return [self._vector(image.decode(errors="ignore")) for image in images_jpeg]
+
+    async def embed_texts(self, texts) -> list[list[float]]:
+        return [self._vector(text) for text in texts]
+
+
+def fake_vision() -> VisualSimilarity:
+    async def fetch_image(url: str) -> bytes | None:
+        return url.encode()
+
+    return VisualSimilarity(FakeEmbedder(), fetch_image=fetch_image)
+
 
 @pytest.fixture
 def fake_ai() -> FakeAI:
@@ -154,6 +194,8 @@ async def client(fake_ai: FakeAI, fake_source: FakeSource) -> AsyncIterator[Asyn
     app.dependency_overrides[get_product_ai] = lambda: fake_ai
     app.dependency_overrides[get_search] = lambda: ProductSearch([fake_source])
     app.dependency_overrides[get_storage] = lambda: FakeStorage()
+    # No visual signal in API tests unless a test opts in; never call a real embedding API.
+    app.dependency_overrides[get_visual_similarity] = lambda: None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()

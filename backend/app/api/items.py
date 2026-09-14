@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import Session
-from app.deps import ClientId, OptionalClientId, ProductAIDep, SearchDep, StorageDep
+from app.deps import (
+    ClientId,
+    OptionalClientId,
+    ProductAIDep,
+    SearchDep,
+    StorageDep,
+    VisionDep,
+)
 from app.models import Item, Listing, ListingKind
 from app.schemas import (
     DiscoverOut,
@@ -23,8 +30,11 @@ from app.schemas import (
 from app.services import discover as discover_service
 from app.services import ingest
 from app.services import prices as prices_service
+from app.services.ai import ItemAnalysis
+from app.services.embeddings import Vector, VisualSimilarity
 from app.services.errors import InvalidImageError
 from app.services.sources import FoundListing
+from app.services.storage import ImageStorage
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -37,12 +47,13 @@ async def create_from_upload(
     session: Session,
     storage: StorageDep,
     ai: ProductAIDep,
+    vision: VisionDep,
     client_id: OptionalClientId,
 ) -> ItemOut:
     data = await file.read(get_settings().max_upload_bytes + 1)
     if len(data) > get_settings().max_upload_bytes:
         raise InvalidImageError("Images must be 10 MB or smaller.")
-    item = await ingest.item_from_upload(data, storage, ai)
+    item = await ingest.item_from_upload(data, storage, ai, vision)
     item.client_id = client_id
     session.add(item)
     await session.commit()
@@ -55,9 +66,10 @@ async def create_from_url(
     session: Session,
     storage: StorageDep,
     ai: ProductAIDep,
+    vision: VisionDep,
     client_id: OptionalClientId,
 ) -> ItemOut:
-    item = await ingest.item_from_url(str(body.url), storage, ai)
+    item = await ingest.item_from_url(str(body.url), storage, ai, vision)
     item.client_id = client_id
     session.add(item)
     await session.commit()
@@ -105,19 +117,29 @@ async def get_item(item_id: uuid.UUID, session: Session) -> ItemOut:
 
 @router.post("/{item_id}/discover", response_model=DiscoverOut)
 async def discover(
-    item_id: uuid.UUID, session: Session, search: SearchDep, ai: ProductAIDep, refresh: bool = False
+    item_id: uuid.UUID,
+    session: Session,
+    search: SearchDep,
+    ai: ProductAIDep,
+    vision: VisionDep,
+    storage: StorageDep,
+    refresh: bool = False,
 ) -> DiscoverOut:
     """Run discovery searches, or return the cached results from a previous run."""
     item = await _get_item(session, item_id, lock=True)
     if item.discovered_at is None or refresh:
-        groups = await discover_service.discover(item, search, ai)
+        reference = await _reference(item, vision, storage)
+        groups = await discover_service.discover(item, search, ai, vision, reference)
         await session.execute(
             delete(Listing).where(Listing.item_id == item.id, Listing.kind.in_(DISCOVER_KINDS))
         )
         position = count()
         for group in groups:
-            for found in group.listings:
-                session.add(_listing(item, group.kind, group.label, next(position), found))
+            for ranked in group.listings:
+                listing = _listing(item, group.kind, group.label, next(position), ranked.listing)
+                listing.score = ranked.score
+                listing.signals = ranked.signals
+                session.add(listing)
         item.discovered_at = datetime.now(UTC)
         await session.commit()
 
@@ -135,18 +157,27 @@ async def discover(
 
 @router.post("/{item_id}/prices", response_model=PriceComparisonOut)
 async def compare_prices(
-    item_id: uuid.UUID, session: Session, search: SearchDep, ai: ProductAIDep, refresh: bool = False
+    item_id: uuid.UUID,
+    session: Session,
+    search: SearchDep,
+    ai: ProductAIDep,
+    vision: VisionDep,
+    storage: StorageDep,
+    refresh: bool = False,
 ) -> PriceComparisonOut:
     """Find the same product at other retailers, or return the cached comparison."""
     item = await _get_item(session, item_id, lock=True)
     if item.prices_checked_at is None or refresh:
-        offers = await prices_service.compare_prices(item, search, ai)
+        reference = await _reference(item, vision, storage)
+        offers = await prices_service.compare_prices(item, search, ai, vision, reference)
         await session.execute(
             delete(Listing).where(Listing.item_id == item.id, Listing.kind == ListingKind.OFFER)
         )
         for position, offer in enumerate(offers):
             listing = _listing(item, ListingKind.OFFER, None, position, offer.listing)
             listing.match_reason = offer.reason
+            listing.score = offer.confidence
+            listing.signals = offer.signals
             session.add(listing)
         item.prices_checked_at = datetime.now(UTC)
         await session.commit()
@@ -171,6 +202,20 @@ async def compare_prices(
         reference=reference,
         offers=[ListingOut.model_validate(o) for o in offers],
     )
+
+
+async def _reference(
+    item: Item, vision: VisualSimilarity | None, storage: ImageStorage
+) -> Vector | None:
+    """The item's reference embedding, computed now for items created before embeddings."""
+    if vision is None or item.image_embedding is not None:
+        return item.image_embedding
+    image = await storage.read_jpeg(item.image_key)
+    if image is None:
+        return None
+    analysis = ItemAnalysis.model_validate(item.analysis)
+    item.image_embedding = await ingest.reference_embedding(image, analysis, vision)
+    return item.image_embedding
 
 
 def item_out(item: Item) -> ItemOut:

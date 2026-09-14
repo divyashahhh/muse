@@ -69,6 +69,8 @@ class ListingOut(ORMModel):
     rating: float | None
     reviews: int | None
     match_reason: str | None
+    # Ranking score (discovery) or match confidence (offers), 0-1.
+    score: float | None = None
 
 
 class DiscoverSection(BaseModel):

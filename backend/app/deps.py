@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.services.ai import ProductAI
 from app.services.ai_claude import ClaudeProductAI
 from app.services.ai_gemini import GeminiProductAI, gemini_client
+from app.services.embeddings import GeminiEmbedder, VisualSimilarity
 from app.services.errors import NotConfiguredError
 from app.services.sources import ProductSearch, ProductSource
 from app.services.sources.ebay import EbaySource
@@ -31,6 +32,20 @@ def get_product_ai() -> ProductAI:
         raise NotConfiguredError("AI analysis isn't configured: set GEMINI_API_KEY.")
     models = [settings.gemini_model, *settings.gemini_fallback_models]
     return GeminiProductAI(gemini_client(settings.gemini_api_key), list(dict.fromkeys(models)))
+
+
+@lru_cache
+def get_visual_similarity() -> VisualSimilarity | None:
+    """Visual ranking signal; None (text-only ranking) when no Gemini key is configured."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return None
+    embedder = GeminiEmbedder(
+        gemini_client(settings.gemini_api_key),
+        settings.embedding_model,
+        settings.embedding_dimensions,
+    )
+    return VisualSimilarity(embedder)
 
 
 @lru_cache
@@ -86,5 +101,6 @@ def get_client_id(client_id: Annotated[str | None, Depends(get_optional_client_i
 ProductAIDep = Annotated[ProductAI, Depends(get_product_ai)]
 SearchDep = Annotated[ProductSearch, Depends(get_search)]
 StorageDep = Annotated[ImageStorage, Depends(get_storage)]
+VisionDep = Annotated[VisualSimilarity | None, Depends(get_visual_similarity)]
 ClientId = Annotated[str, Depends(get_client_id)]
 OptionalClientId = Annotated[str | None, Depends(get_optional_client_id)]

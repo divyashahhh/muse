@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -10,6 +12,13 @@ from app.services.errors import ServiceError
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # Pipeline telemetry (search funnel counts, timings) is logged at INFO under "app".
+    app_log = logging.getLogger("app")
+    if not app_log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        app_log.addHandler(handler)
+        app_log.setLevel(logging.INFO)
     app = FastAPI(
         title="Muse API",
         description="Find an item, compare its price across retailers, discover more like it.",

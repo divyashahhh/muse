@@ -74,6 +74,9 @@ class Item(Base):
 
     # ItemAnalysis (see app/services/ai.py), stored as JSON.
     analysis: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Multimodal embedding of the item, cropped to its bounding box; the reference for visual
+    # ranking and verification. Null when embeddings are unavailable.
+    image_embedding: Mapped[list[float] | None] = mapped_column(JSONB)
 
     # Set when each search last ran, so results are served from cache afterwards.
     discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -115,6 +118,9 @@ class Listing(Base):
     reviews: Mapped[int | None] = mapped_column(Integer)
     # Why the offer was judged to be the same product.
     match_reason: Mapped[str | None] = mapped_column(Text)
+    # Ranking score (discovery) or match confidence (offers), and the signals behind it.
+    score: Mapped[float | None] = mapped_column(Float)
+    signals: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     provider: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

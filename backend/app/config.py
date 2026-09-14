@@ -22,6 +22,10 @@ class Settings(BaseSettings):
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     ]
+    # Multimodal embeddings for visual re-ranking and verification (uses GEMINI_API_KEY, so it
+    # also works with AI_PROVIDER=claude). Leave the key unset to rank without visual signals.
+    embedding_model: str = "gemini-embedding-2"
+    embedding_dimensions: int = 768
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-5"
 

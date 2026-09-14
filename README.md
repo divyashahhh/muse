@@ -12,7 +12,9 @@ UI polish is deliberately deferred; this is the working proof of concept.
 
 ## How it works
 
-Muse runs entirely on free tiers.
+Muse runs entirely on free tiers. The AI layer (perception, visual embeddings, rank fusion,
+ranking, exact-product matching and evaluation) is documented in depth in
+[docs/AI_LAYER.md](docs/AI_LAYER.md).
 
 ```
  upload / URL ──► fetch page (SSRF-guarded) ──► schema.org / Open Graph product facts (+ GTIN)

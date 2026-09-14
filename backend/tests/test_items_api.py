@@ -1,10 +1,17 @@
+import uuid
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.db import SessionLocal
+from app.deps import get_visual_similarity
+from app.main import app
+from app.models import Item, Listing
 from app.services import ingest
 from app.services.errors import FetchError
 from app.services.fetch import FetchedResource
-from tests.conftest import FakeAI, FakeSource, png_bytes
+from tests.conftest import FakeAI, FakeSource, fake_vision, png_bytes
 
 PRODUCT_PAGE = b"""
 <html><head>
@@ -176,3 +183,50 @@ async def test_price_comparison_accepts_matching_gtin_without_ai(
 async def test_unknown_item_is_404(client: AsyncClient) -> None:
     response = await client.post("/api/items/00000000-0000-0000-0000-000000000000/discover")
     assert response.status_code == 404
+
+
+async def _set_reference(item_id: str, vector: list[float]) -> None:
+    async with SessionLocal() as session:
+        item = await session.get(Item, uuid.UUID(item_id))
+        item.image_embedding = vector
+        await session.commit()
+
+
+async def test_ranking_signals_are_stored_and_exposed_with_vision(
+    client: AsyncClient, fake_ai: FakeAI
+) -> None:
+    app.dependency_overrides[get_visual_similarity] = fake_vision
+    item = await upload(client)
+    await _set_reference(item["id"], [0.0, 1.0, 0.0, 0.0, 0.1])  # "jacket"
+
+    sections = (await client.post(f"/api/items/{item['id']}/discover")).json()["sections"]
+    jackets = next(s for s in sections if s["label"] == "Retro track jackets")["listings"]
+    assert jackets and all(0 <= x["score"] <= 1 for x in jackets)
+
+    async with SessionLocal() as session:
+        stored = (await session.scalars(select(Listing).where(Listing.score.is_not(None)))).all()
+    signals = stored[0].signals
+    assert {"visual", "visual_cosine", "visual_modality", "grade", "rrf"} <= signals.keys()
+    # Listings with no image were compared through their titles.
+    assert signals["visual_modality"] == "text"
+
+
+async def test_price_verification_receives_evidence(client: AsyncClient, fake_ai: FakeAI) -> None:
+    app.dependency_overrides[get_visual_similarity] = fake_vision
+    item = await upload(client)
+    await _set_reference(item["id"], [1.0, 0.0, 0.0, 0.0, 0.1])
+
+    offers = (await client.post(f"/api/items/{item['id']}/prices")).json()["offers"]
+    assert offers and all(o["score"] == 0.9 for o in offers)
+    assert {c.image_similarity for c in fake_ai.verified} <= {"low", "moderate", "high"}
+    assert any(c.price_note for c in fake_ai.verified) is False
+
+
+async def test_items_without_embedding_degrade_to_text_ranking(client: AsyncClient) -> None:
+    app.dependency_overrides[get_visual_similarity] = fake_vision
+    item = await upload(client)
+    await _set_reference(item["id"], None)  # stored image unreadable (FakeStorage) -> no reference
+
+    response = await client.post(f"/api/items/{item['id']}/discover")
+    assert response.status_code == 200
+    assert response.json()["sections"]

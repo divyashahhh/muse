@@ -18,6 +18,8 @@ class StoredImage:
 class ImageStorage(Protocol):
     async def save_jpeg(self, data: bytes) -> StoredImage: ...
 
+    async def read_jpeg(self, key: str) -> bytes | None: ...
+
 
 def new_key() -> str:
     return f"{datetime.now(UTC):%Y/%m/%d}/{uuid.uuid4().hex}.jpg"
@@ -36,6 +38,12 @@ class LocalImageStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return StoredImage(key=key, url=f"{self.public_base_url}/media/{key}")
+
+    async def read_jpeg(self, key: str) -> bytes | None:
+        path = (self.root / key).resolve()
+        if not path.is_relative_to(self.root.resolve()) or not path.is_file():
+            return None
+        return path.read_bytes()
 
 
 class SupabaseImageStorage:
@@ -60,7 +68,15 @@ class SupabaseImageStorage:
             )
         if response.is_error:
             raise UpstreamError("Couldn't store the image. Please try again.")
-        return StoredImage(
-            key=key,
-            url=f"{self.project_url}/storage/v1/object/public/{self.bucket}/{key}",
-        )
+        return StoredImage(key=key, url=self._public_url(key))
+
+    async def read_jpeg(self, key: str) -> bytes | None:
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                response = await client.get(self._public_url(key))
+            except httpx.HTTPError:
+                return None
+        return response.content if response.is_success else None
+
+    def _public_url(self, key: str) -> str:
+        return f"{self.project_url}/storage/v1/object/public/{self.bucket}/{key}"

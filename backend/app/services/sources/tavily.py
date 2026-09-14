@@ -16,13 +16,17 @@ import httpx
 from app.services.errors import FetchError, UpstreamError
 from app.services.fetch import BROWSER_HEADERS, TIMEOUT, fetch
 from app.services.product_page import PageProduct, parse_product_page
+from app.services.retrieval import canonical_url
 from app.services.sources.base import FoundListing
 
 log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://api.tavily.com/search"
-RESULTS_PER_SEARCH = 10
-PAGE_FETCH_CONCURRENCY = 6
+# Basic-depth searches cost one credit whatever the result count, so take the maximum.
+RESULTS_PER_SEARCH = 20
+PAGE_FETCH_CONCURRENCY = 10
+# One slow site (often a review blog, never a product page) shouldn't hold up every search.
+PAGE_READ_TIMEOUT_SECONDS = 6.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 
 # Never product pages.
@@ -34,6 +38,10 @@ EXCLUDED_DOMAINS = [
     "nymag.com", "wirecutter.com", "businessinsider.com", "cnn.com", "usatoday.com",
     "harpersbazaar.com", "elle.com", "cosmopolitan.com", "instyle.com", "glamour.com",
     "allure.com", "byrdie.com", "thezoereport.com", "popsugar.com", "today.com",
+    # Aggregators and marketplaces that block automated reads (eBay is covered by its API),
+    # and shortlinks that never resolve to a readable page. Excluding them frees result slots.
+    "lyst.com", "etsy.com", "dhgate.com", "ebay.com", "amzn.to", "amazon.com", "temu.com",
+    "shein.com", "aliexpress.com", "walmart.com", "target.com", "shopstyle.com", "modesens.com",
 ]  # fmt: skip
 
 
@@ -45,9 +53,13 @@ class TavilySource:
         self.http = http or httpx.AsyncClient(timeout=TIMEOUT, headers=BROWSER_HEADERS)
 
     async def search(self, query: str, *, gtin: str | None = None) -> list[FoundListing]:
-        urls = await self._search_urls(f"{gtin} {query}" if gtin else f"{query} buy")
+        found = await self._search_urls(f"{gtin} {query}" if gtin else f"{query} buy")
+        # Search results often list one page under http/https/www variants; read each once.
+        urls: dict[str, str] = {}
+        for url in found:
+            urls.setdefault(canonical_url(url), url)
         semaphore = asyncio.Semaphore(PAGE_FETCH_CONCURRENCY)
-        pages = await asyncio.gather(*(self._read_product(url, semaphore) for url in urls))
+        pages = await asyncio.gather(*(self._read_product(url, semaphore) for url in urls.values()))
         return [page for page in pages if page]
 
     async def _search_urls(self, query: str) -> list[str]:
@@ -75,10 +87,11 @@ class TavilySource:
     async def _read_product(self, url: str, semaphore: asyncio.Semaphore) -> FoundListing | None:
         async with semaphore:
             try:
-                resource = await fetch(
-                    url, max_bytes=MAX_PAGE_BYTES, accept="text/html", client=self.http
+                resource = await asyncio.wait_for(
+                    fetch(url, max_bytes=MAX_PAGE_BYTES, accept="text/html", client=self.http),
+                    PAGE_READ_TIMEOUT_SECONDS,
                 )
-            except FetchError:
+            except (FetchError, TimeoutError):
                 return None
         if "html" not in resource.content_type:
             return None
