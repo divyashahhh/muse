@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 
 from app.models import ItemSource, ListingKind
 from app.services.ai import ItemAnalysis
@@ -37,6 +38,7 @@ class ItemOut(ORMModel):
 class RecentItemOut(ORMModel):
     id: uuid.UUID
     source: ItemSource
+    source_url: str | None
     image_url: str
     title: str | None
     brand: str | None
@@ -105,6 +107,32 @@ class SavedItemIn(BaseModel):
     price: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, max_length=8)
     item_id: uuid.UUID | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def tidy_snapshot(cls, data: Any) -> Any:
+        """Listings come from scraped pages: trim oversized text and drop unusable optional
+        fields rather than refusing to save the item."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for field, limit in (("title", 1000), ("retailer", 200)):
+            if isinstance(data.get(field), str):
+                data[field] = data[field].strip()[:limit] or None
+        image_url = data.get("image_url")
+        if isinstance(image_url, str) and image_url.startswith("//"):
+            data["image_url"] = "https:" + image_url
+        elif image_url is not None and not (
+            isinstance(image_url, str) and image_url.startswith(("http://", "https://"))
+        ):
+            data["image_url"] = None
+        currency = data.get("currency")
+        if currency is not None and not (isinstance(currency, str) and 0 < len(currency) <= 8):
+            data["currency"] = None
+        price = data.get("price")
+        if isinstance(price, int | float) and price < 0:
+            data["price"] = None
+        return data
 
 
 class SavedItemOut(ORMModel):

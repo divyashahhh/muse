@@ -68,6 +68,7 @@ export interface PriceComparison {
 export interface RecentItem {
   id: string
   source: 'upload' | 'url'
+  source_url: string | null
   image_url: string
   title: string | null
   brand: string | null
@@ -129,7 +130,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${BASE_URL}/api${path}`, { ...init, headers })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
+    // FastAPI validation errors put a list of problems in `detail`.
+    const detail =
+      typeof body?.detail === 'string'
+        ? body.detail
+        : Array.isArray(body?.detail) && typeof body.detail[0]?.msg === 'string'
+          ? body.detail[0].msg
+          : response.statusText
     throw new ApiError(response.status, detail || 'Something went wrong.')
   }
   return (response.status === 204 ? undefined : await response.json()) as T

@@ -8,6 +8,7 @@ import { useRequest } from '../hooks/useRequest'
 import { api } from '../lib/api'
 import type { Item, Listing, ListingKind } from '../lib/api'
 import { formatPrice, hostname, swatchFor } from '../lib/format'
+import { wishlistInputForItem } from '../lib/wishlist'
 
 type Tab = 'discover' | 'prices'
 
@@ -166,8 +167,8 @@ function ItemDetails({ item }: { item: Item }) {
           </div>
         )}
 
-        {item.source_url && (
-          <div className="mt-8 flex items-center gap-3">
+        <div className="mt-8 flex items-center gap-3">
+          {item.source_url ? (
             <a
               href={item.source_url}
               target="_blank"
@@ -176,20 +177,11 @@ function ItemDetails({ item }: { item: Item }) {
             >
               View on {hostname(item.source_url)} <ExternalIcon size={16} />
             </a>
-            <HeartButton
-              variant="outline"
-              item={{
-                item_id: item.id,
-                title: item.title ?? a.product_name,
-                url: item.source_url,
-                retailer: item.retailer,
-                image_url: item.image_url,
-                price: item.price,
-                currency: item.currency,
-              }}
-            />
-          </div>
-        )}
+          ) : (
+            <p className="text-sm text-muted">Save this item to come back to it later</p>
+          )}
+          <HeartButton variant="outline" item={wishlistInputForItem(item)} />
+        </div>
 
         <dl className="mt-8 space-y-2 border-t border-line pt-6 text-sm">
           <div className="flex gap-2">

@@ -2,6 +2,8 @@ import { Link } from 'react-router'
 
 import type { RecentItem } from '../lib/api'
 import { formatPrice, timeAgo } from '../lib/format'
+import { wishlistInputForItem } from '../lib/wishlist'
+import { HeartButton } from './HeartButton'
 import { TrashIcon } from './Icons'
 
 export function RecentCard({ item, onRemove }: { item: RecentItem; onRemove?: () => void }) {
@@ -19,16 +21,19 @@ export function RecentCard({ item, onRemove }: { item: RecentItem; onRemove?: ()
         <span className="absolute top-3 left-3 rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-ink shadow-sm">
           {item.source === 'url' ? 'From link' : 'From photo'}
         </span>
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label="Remove from recents"
-            className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full bg-white text-ink shadow-sm transition hover:text-red-600"
-          >
-            <TrashIcon size={17} />
-          </button>
-        )}
+        <div className="absolute top-3 right-3 flex flex-col gap-2">
+          <HeartButton item={wishlistInputForItem(item)} />
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              aria-label="Remove from recents"
+              className="flex size-9 items-center justify-center rounded-full bg-white text-ink shadow-sm transition hover:text-red-600"
+            >
+              <TrashIcon size={17} />
+            </button>
+          )}
+        </div>
       </div>
       <p className="mt-3 flex justify-between gap-2 text-xs text-muted">
         <span className="truncate capitalize">{item.category}</span>

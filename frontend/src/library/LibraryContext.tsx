@@ -49,15 +49,20 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       recents,
       error,
       wishlisted: (url) => wishlist.find((w) => w.url === url),
+      // Wishlist changes update local state from the API response, so hearts respond at once.
       toggleWishlist: async (item) => {
         const existing = wishlist.find((w) => w.url === item.url)
-        if (existing) await api.removeFromWishlist(existing.id)
-        else await api.addToWishlist(item)
-        await load()
+        if (existing) {
+          await api.removeFromWishlist(existing.id)
+          setWishlist((current) => current.filter((w) => w.id !== existing.id))
+        } else {
+          const saved = await api.addToWishlist(item)
+          setWishlist((current) => [saved, ...current.filter((w) => w.id !== saved.id)])
+        }
       },
       removeFromWishlist: async (id) => {
         await api.removeFromWishlist(id)
-        await load()
+        setWishlist((current) => current.filter((w) => w.id !== id))
       },
       removeRecent: async (id) => {
         await api.removeRecent(id)
