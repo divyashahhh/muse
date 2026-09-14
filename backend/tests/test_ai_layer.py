@@ -258,3 +258,16 @@ async def test_gemini_embedder_batches_one_content_per_input() -> None:
     first = requests[0]["requests"][0]
     assert first["outputDimensionality"] == 768
     assert first["content"]["parts"][0]["inline_data"]["mime_type"] == "image/jpeg"
+
+
+def test_similar_brand_sections_never_repeat_the_items_own_brand() -> None:
+    from app.services.discover import plan_searches
+
+    analysis = ANALYSIS.model_copy(
+        update={
+            "brand": "Everlane",
+            "similar_brands": ["Everlane", "Madewell", "madewell", "Cuyana"],
+        }
+    )
+    labels = [p.label for p in plan_searches(analysis) if p.kind == ListingKind.SIMILAR_BRAND]
+    assert labels == ["Madewell", "Cuyana"]

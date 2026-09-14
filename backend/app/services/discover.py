@@ -20,6 +20,7 @@ from app.models import Item, ListingKind
 from app.services.ai import ItemAnalysis, ListingSummary, ProductAI
 from app.services.embeddings import Similarity, Vector, VisualSimilarity
 from app.services.errors import UpstreamError
+from app.services.matching import normalize_code
 from app.services.ranking import score_section, select_diverse
 from app.services.retrieval import (
     Candidate,
@@ -88,9 +89,22 @@ def plan_searches(analysis: ItemAnalysis) -> list[_Plan]:
             [f"{brand} {category}"],
             f"Similar brand: {brand}",
         )
-        for brand in analysis.similar_brands[:MAX_SIMILAR_BRANDS]
+        for brand in _other_brands(analysis)[:MAX_SIMILAR_BRANDS]
     ]
     return plans
+
+
+def _other_brands(analysis: ItemAnalysis) -> list[str]:
+    """Similar brands, minus the item's own (models sometimes include it despite the prompt)."""
+    own = normalize_code(analysis.brand or "")
+    seen: set[str] = set()
+    brands = []
+    for brand in analysis.similar_brands:
+        key = normalize_code(brand)
+        if key and key not in seen and not (own and (own in key or key in own)):
+            seen.add(key)
+            brands.append(brand)
+    return brands
 
 
 async def discover(
