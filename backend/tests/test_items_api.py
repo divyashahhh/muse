@@ -30,6 +30,22 @@ async def test_health(client: AsyncClient) -> None:
     assert response.json() == {"status": "ok", "database": "ok"}
 
 
+async def test_root_redirects_to_docs_without_frontend_url(client: AsyncClient) -> None:
+    response = await client.get("/")
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+
+
+async def test_root_redirects_to_frontend(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "frontend_url", "https://muse.example")
+    response = await client.get("/")
+    assert response.headers["location"] == "https://muse.example"
+
+
 async def test_upload_creates_analysed_item(client: AsyncClient, fake_ai: FakeAI) -> None:
     item = await upload(client)
     assert item["source"] == "upload"

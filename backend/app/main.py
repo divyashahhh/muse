@@ -1,6 +1,6 @@
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import health, items, wishlist
@@ -31,6 +31,11 @@ def create_app() -> FastAPI:
     api.include_router(items.router)
     api.include_router(wishlist.router)
     app.include_router(api)
+
+    # The API has no page of its own: send visitors to the web app, or the docs.
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse(get_settings().frontend_url or "/docs")
 
     # Locally stored uploads (development; production uses Supabase Storage).
     settings.media_dir.mkdir(parents=True, exist_ok=True)

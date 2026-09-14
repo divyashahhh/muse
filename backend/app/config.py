@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     supabase_bucket: str = "uploads"
 
     public_api_url: str = "http://localhost:8000"
+    # Where the web app lives; the API root redirects there (or to /docs when unset).
+    frontend_url: str = ""
     media_dir: Path = Path("media")
     max_upload_bytes: int = 10 * 1024 * 1024
 
